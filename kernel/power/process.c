@@ -113,18 +113,19 @@ static int try_to_freeze_tasks(bool user_only)
 		}
 		else {
 			printk("\n");
-			printk(KERN_ERR "Freezing of tasks failed after %d.%02d seconds "
+			printk(KERN_ERR "Freezing of tasks %s after %d.%02d seconds "
 			       "(%d tasks refusing to freeze, wq_busy=%d):\n",
+			       wakeup ? "aborted" : "failed",
 			       elapsed_csecs / 100, elapsed_csecs % 100,
 			       todo - wq_busy, wq_busy);
 		}
-		thaw_workqueues();
 
 		if (!wakeup) {
 			read_lock(&tasklist_lock);
 			do_each_thread(g, p) {
 				if (p != current && !freezer_should_skip(p)
-				    && freezing(p) && !frozen(p))
+				    && freezing(p) && !frozen(p) &&
+				    elapsed_csecs > 100)
 					sched_show_task(p);
 			} while_each_thread(g, p);
 			read_unlock(&tasklist_lock);
