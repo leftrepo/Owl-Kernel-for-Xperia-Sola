@@ -10,6 +10,7 @@
  */
 
 #include <linux/err.h>
+#include <linux/module.h>
 #include <linux/pm_runtime.h>
 
 #include <linux/mmc/host.h>
@@ -1274,7 +1275,6 @@ int sdio_reset_comm(struct mmc_card *card)
 		mmc_sd_go_highspeed(card);
 	else if (err)
 		goto err;
-
 	/*
 	 * Change to the card's maximum speed.
 	 */
@@ -1285,7 +1285,6 @@ int sdio_reset_comm(struct mmc_card *card)
 		mmc_set_bus_width(host, MMC_BUS_WIDTH_4);
 	else if (err)
 		goto err;
-
 	mmc_release_host(host);
 	return 0;
 err:
