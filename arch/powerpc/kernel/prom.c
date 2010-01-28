@@ -27,11 +27,11 @@
 #include <linux/delay.h>
 #include <linux/initrd.h>
 #include <linux/bitops.h>
-#include <linux/export.h>
+#include <linux/module.h>
 #include <linux/kexec.h>
 #include <linux/debugfs.h>
 #include <linux/irq.h>
-#include <linux/memblock.h>
+#include <linux/lmb.h>
 
 #include <asm/prom.h>
 #include <asm/rtas.h>
@@ -43,7 +43,6 @@
 #include <asm/smp.h>
 #include <asm/system.h>
 #include <asm/mmu.h>
-#include <asm/paca.h>
 #include <asm/pgtable.h>
 #include <asm/pci.h>
 #include <asm/iommu.h>
@@ -54,8 +53,6 @@
 #include <asm/pci-bridge.h>
 #include <asm/phyp_dump.h>
 #include <asm/kexec.h>
-#include <asm/opal.h>
-
 #include <mm/mmu_decl.h>
 
 #ifdef DEBUG
@@ -68,10 +65,12 @@
 int __initdata iommu_is_off;
 int __initdata iommu_force_on;
 unsigned long tce_alloc_start, tce_alloc_end;
-u64 ppc64_rma_size;
 #endif
-static phys_addr_t first_memblock_size;
-static int __initdata boot_cpu_count;
+
+extern rwlock_t devtree_lock;	/* temporary while merging */
+
+/* export that to outside world */
+struct device_node *of_chosen;
 
 static int __init early_parse_mem(char *p)
 {
@@ -85,29 +84,11 @@ static int __init early_parse_mem(char *p)
 }
 early_param("mem", early_parse_mem);
 
-/*
- * overlaps_initrd - check for overlap with page aligned extension of
- * initrd.
- */
-static inline int overlaps_initrd(unsigned long start, unsigned long size)
-{
-#ifdef CONFIG_BLK_DEV_INITRD
-	if (!initrd_start)
-		return 0;
-
-	return	(start + size) > _ALIGN_DOWN(initrd_start, PAGE_SIZE) &&
-			start <= _ALIGN_UP(initrd_end, PAGE_SIZE);
-#else
-	return 0;
-#endif
-}
-
 /**
  * move_device_tree - move tree to an unused area, if needed.
  *
  * The device tree may be allocated beyond our memory limit, or inside the
- * crash kernel region for kdump, or within the page aligned range of initrd.
- * If so, move it out of the way.
+ * crash kernel region for kdump. If so, move it out of the way.
  */
 static void __init move_device_tree(void)
 {
@@ -117,12 +98,11 @@ static void __init move_device_tree(void)
 	DBG("-> move_device_tree\n");
 
 	start = __pa(initial_boot_params);
-	size = be32_to_cpu(initial_boot_params->totalsize);
+	size = initial_boot_params->totalsize;
 
-	if ((memory_limit && (start + size) > PHYSICAL_START + memory_limit) ||
-			overlaps_crashkernel(start, size) ||
-			overlaps_initrd(start, size)) {
-		p = __va(memblock_alloc(size, PAGE_SIZE));
+	if ((memory_limit && (start + size) > memory_limit) ||
+			overlaps_crashkernel(start, size)) {
+		p = __va(lmb_alloc_base(size, PAGE_SIZE, lmb.rmo_size));
 		memcpy(p, initial_boot_params, size);
 		initial_boot_params = (struct boot_param_header *)p;
 		DBG("Moved device tree to 0x%p\n", p);
@@ -146,19 +126,18 @@ static void __init move_device_tree(void)
  */
 static struct ibm_pa_feature {
 	unsigned long	cpu_features;	/* CPU_FTR_xxx bit */
-	unsigned long	mmu_features;	/* MMU_FTR_xxx bit */
 	unsigned int	cpu_user_ftrs;	/* PPC_FEATURE_xxx bit */
 	unsigned char	pabyte;		/* byte number in ibm,pa-features */
 	unsigned char	pabit;		/* bit number (big-endian) */
 	unsigned char	invert;		/* if 1, pa bit set => clear feature */
 } ibm_pa_features[] __initdata = {
-	{0, 0, PPC_FEATURE_HAS_MMU,	0, 0, 0},
-	{0, 0, PPC_FEATURE_HAS_FPU,	0, 1, 0},
-	{0, MMU_FTR_SLB, 0,		0, 2, 0},
-	{CPU_FTR_CTRL, 0, 0,		0, 3, 0},
-	{CPU_FTR_NOEXECUTE, 0, 0,	0, 6, 0},
-	{CPU_FTR_NODSISRALIGN, 0, 0,	1, 1, 1},
-	{0, MMU_FTR_CI_LARGE_PAGE, 0,	1, 2, 0},
+	{0, PPC_FEATURE_HAS_MMU,	0, 0, 0},
+	{0, PPC_FEATURE_HAS_FPU,	0, 1, 0},
+	{CPU_FTR_SLB, 0,		0, 2, 0},
+	{CPU_FTR_CTRL, 0,		0, 3, 0},
+	{CPU_FTR_NOEXECUTE, 0,		0, 6, 0},
+	{CPU_FTR_NODSISRALIGN, 0,	1, 1, 1},
+	{CPU_FTR_CI_LARGE_PAGE, 0,	1, 2, 0},
 	{CPU_FTR_REAL_LE, PPC_FEATURE_TRUE_LE, 5, 0, 0},
 };
 
@@ -190,11 +169,9 @@ static void __init scan_features(unsigned long node, unsigned char *ftrs,
 		if (bit ^ fp->invert) {
 			cur_cpu_spec->cpu_features |= fp->cpu_features;
 			cur_cpu_spec->cpu_user_features |= fp->cpu_user_ftrs;
-			cur_cpu_spec->mmu_features |= fp->mmu_features;
 		} else {
 			cur_cpu_spec->cpu_features &= ~fp->cpu_features;
 			cur_cpu_spec->cpu_user_features &= ~fp->cpu_user_ftrs;
-			cur_cpu_spec->mmu_features &= ~fp->mmu_features;
 		}
 	}
 }
@@ -294,13 +271,13 @@ static int __init early_init_dt_scan_cpus(unsigned long node,
 					  const char *uname, int depth,
 					  void *data)
 {
+	static int logical_cpuid = 0;
 	char *type = of_get_flat_dt_prop(node, "device_type", NULL);
 	const u32 *prop;
 	const u32 *intserv;
 	int i, nthreads;
 	unsigned long len;
-	int found = -1;
-	int found_thread = 0;
+	int found = 0;
 
 	/* We are scanning "cpu" nodes only */
 	if (type == NULL || strcmp(type, "cpu") != 0)
@@ -324,10 +301,11 @@ static int __init early_init_dt_scan_cpus(unsigned long node,
 		 * version 2 of the kexec param format adds the phys cpuid of
 		 * booted proc.
 		 */
-		if (initial_boot_params->version >= 2) {
-			if (intserv[i] == initial_boot_params->boot_cpuid_phys) {
-				found = boot_cpu_count;
-				found_thread = i;
+		if (initial_boot_params && initial_boot_params->version >= 2) {
+			if (intserv[i] ==
+					initial_boot_params->boot_cpuid_phys) {
+				found = 1;
+				break;
 			}
 		} else {
 			/*
@@ -336,20 +314,23 @@ static int __init early_init_dt_scan_cpus(unsigned long node,
 			 * off secondary threads.
 			 */
 			if (of_get_flat_dt_prop(node,
-					"linux,boot-cpu", NULL) != NULL)
-				found = boot_cpu_count;
+					"linux,boot-cpu", NULL) != NULL) {
+				found = 1;
+				break;
+			}
 		}
+
 #ifdef CONFIG_SMP
 		/* logical cpu id is always 0 on UP kernels */
-		boot_cpu_count++;
+		logical_cpuid++;
 #endif
 	}
 
-	if (found >= 0) {
-		DBG("boot cpu: logical %d physical %d\n", found,
-			intserv[found_thread]);
-		boot_cpuid = found;
-		set_hard_smp_processor_id(found, intserv[found_thread]);
+	if (found) {
+		DBG("boot cpu: logical %d physical %d\n", logical_cpuid,
+			intserv[i]);
+		boot_cpuid = logical_cpuid;
+		set_hard_smp_processor_id(boot_cpuid, intserv[i]);
 
 		/*
 		 * PAPR defines "logical" PVR values for cpus that
@@ -386,14 +367,9 @@ static int __init early_init_dt_scan_cpus(unsigned long node,
 	return 0;
 }
 
-int __init early_init_dt_scan_chosen_ppc(unsigned long node, const char *uname,
-					 int depth, void *data)
+void __init early_init_dt_scan_chosen_arch(unsigned long node)
 {
 	unsigned long *lprop;
-
-	/* Use common scan routine to determine if this is the chosen node */
-	if (early_init_dt_scan_chosen(node, uname, depth, data) == 0)
-		return 0;
 
 #ifdef CONFIG_PPC64
 	/* check if iommu is forced on or off */
@@ -426,9 +402,6 @@ int __init early_init_dt_scan_chosen_ppc(unsigned long node, const char *uname,
 	if (lprop)
 		crashk_res.end = crashk_res.start + *lprop - 1;
 #endif
-
-	/* break now */
-	return 1;
 }
 
 #ifdef CONFIG_PPC_PSERIES
@@ -442,13 +415,13 @@ static int __init early_init_dt_scan_drconf_memory(unsigned long node)
 {
 	__be32 *dm, *ls, *usm;
 	unsigned long l, n, flags;
-	u64 base, size, memblock_size;
+	u64 base, size, lmb_size;
 	unsigned int is_kexec_kdump = 0, rngs;
 
 	ls = of_get_flat_dt_prop(node, "ibm,lmb-size", &l);
 	if (ls == NULL || l < dt_root_size_cells * sizeof(__be32))
 		return 0;
-	memblock_size = dt_mem_next_cell(dt_root_size_cells, &ls);
+	lmb_size = dt_mem_next_cell(dt_root_size_cells, &ls);
 
 	dm = of_get_flat_dt_prop(node, "ibm,dynamic-memory", &l);
 	if (dm == NULL || l < sizeof(__be32))
@@ -473,11 +446,11 @@ static int __init early_init_dt_scan_drconf_memory(unsigned long node)
 		   or if the block is not assigned to this partition (0x8) */
 		if ((flags & 0x80) || !(flags & 0x8))
 			continue;
-		size = memblock_size;
+		size = lmb_size;
 		rngs = 1;
 		if (is_kexec_kdump) {
 			/*
-			 * For each memblock in ibm,dynamic-memory, a corresponding
+			 * For each lmb in ibm,dynamic-memory, a corresponding
 			 * entry in linux,drconf-usable-memory property contains
 			 * a counter 'p' followed by 'p' (base, size) duple.
 			 * Now read the counter from
@@ -500,64 +473,75 @@ static int __init early_init_dt_scan_drconf_memory(unsigned long node)
 				if ((base + size) > 0x80000000ul)
 					size = 0x80000000ul - base;
 			}
-			memblock_add(base, size);
+			lmb_add(base, size);
 		} while (--rngs);
 	}
-	memblock_dump_all();
+	lmb_dump_all();
 	return 0;
 }
 #else
 #define early_init_dt_scan_drconf_memory(node)	0
 #endif /* CONFIG_PPC_PSERIES */
 
-static int __init early_init_dt_scan_memory_ppc(unsigned long node,
-						const char *uname,
-						int depth, void *data)
+static int __init early_init_dt_scan_memory(unsigned long node,
+					    const char *uname, int depth, void *data)
 {
+	char *type = of_get_flat_dt_prop(node, "device_type", NULL);
+	__be32 *reg, *endp;
+	unsigned long l;
+
+	/* Look for the ibm,dynamic-reconfiguration-memory node */
 	if (depth == 1 &&
 	    strcmp(uname, "ibm,dynamic-reconfiguration-memory") == 0)
 		return early_init_dt_scan_drconf_memory(node);
-	
-	return early_init_dt_scan_memory(node, uname, depth, data);
-}
 
-void __init early_init_dt_add_memory_arch(u64 base, u64 size)
-{
+	/* We are scanning "memory" nodes only */
+	if (type == NULL) {
+		/*
+		 * The longtrail doesn't have a device_type on the
+		 * /memory node, so look for the node called /memory@0.
+		 */
+		if (depth != 1 || strcmp(uname, "memory@0") != 0)
+			return 0;
+	} else if (strcmp(type, "memory") != 0)
+		return 0;
+
+	reg = of_get_flat_dt_prop(node, "linux,usable-memory", &l);
+	if (reg == NULL)
+		reg = of_get_flat_dt_prop(node, "reg", &l);
+	if (reg == NULL)
+		return 0;
+
+	endp = reg + (l / sizeof(__be32));
+
+	DBG("memory scan node %s, reg size %ld, data: %x %x %x %x,\n",
+	    uname, l, reg[0], reg[1], reg[2], reg[3]);
+
+	while ((endp - reg) >= (dt_root_addr_cells + dt_root_size_cells)) {
+		u64 base, size;
+
+		base = dt_mem_next_cell(dt_root_addr_cells, &reg);
+		size = dt_mem_next_cell(dt_root_size_cells, &reg);
+
+		if (size == 0)
+			continue;
+		DBG(" - %llx ,  %llx\n", (unsigned long long)base,
+		    (unsigned long long)size);
 #ifdef CONFIG_PPC64
-	if (iommu_is_off) {
-		if (base >= 0x80000000ul)
-			return;
-		if ((base + size) > 0x80000000ul)
-			size = 0x80000000ul - base;
-	}
+		if (iommu_is_off) {
+			if (base >= 0x80000000ul)
+				continue;
+			if ((base + size) > 0x80000000ul)
+				size = 0x80000000ul - base;
+		}
 #endif
-	/* Keep track of the beginning of memory -and- the size of
-	 * the very first block in the device-tree as it represents
-	 * the RMA on ppc64 server
-	 */
-	if (base < memstart_addr) {
-		memstart_addr = base;
-		first_memblock_size = size;
+		lmb_add(base, size);
+
+		memstart_addr = min((u64)memstart_addr, base);
 	}
 
-	/* Add the chunk to the MEMBLOCK list */
-	memblock_add(base, size);
+	return 0;
 }
-
-void * __init early_init_dt_alloc_memory_arch(u64 size, u64 align)
-{
-	return __va(memblock_alloc(size, align));
-}
-
-#ifdef CONFIG_BLK_DEV_INITRD
-void __init early_init_dt_setup_initrd_arch(unsigned long start,
-		unsigned long end)
-{
-	initrd_start = (unsigned long)__va(start);
-	initrd_end = (unsigned long)__va(end);
-	initrd_below_start_ok = 1;
-}
-#endif
 
 static void __init early_reserve_mem(void)
 {
@@ -572,14 +556,12 @@ static void __init early_reserve_mem(void)
 	/* before we do anything, lets reserve the dt blob */
 	self_base = __pa((unsigned long)initial_boot_params);
 	self_size = initial_boot_params->totalsize;
-	memblock_reserve(self_base, self_size);
+	lmb_reserve(self_base, self_size);
 
 #ifdef CONFIG_BLK_DEV_INITRD
 	/* then reserve the initrd, if any */
 	if (initrd_start && (initrd_end > initrd_start))
-		memblock_reserve(_ALIGN_DOWN(__pa(initrd_start), PAGE_SIZE),
-			_ALIGN_UP(initrd_end, PAGE_SIZE) -
-			_ALIGN_DOWN(initrd_start, PAGE_SIZE));
+		lmb_reserve(__pa(initrd_start), initrd_end - initrd_start);
 #endif /* CONFIG_BLK_DEV_INITRD */
 
 #ifdef CONFIG_PPC32
@@ -600,7 +582,7 @@ static void __init early_reserve_mem(void)
 			if (base_32 == self_base && size_32 == self_size)
 				continue;
 			DBG("reserving: %x -> %x\n", base_32, size_32);
-			memblock_reserve(base_32, size_32);
+			lmb_reserve(base_32, size_32);
 		}
 		return;
 	}
@@ -611,7 +593,7 @@ static void __init early_reserve_mem(void)
 		if (size == 0)
 			break;
 		DBG("reserving: %llx -> %llx\n", base, size);
-		memblock_reserve(base, size);
+		lmb_reserve(base, size);
 	}
 }
 
@@ -634,7 +616,7 @@ static inline unsigned long phyp_dump_calculate_reserve_size(void)
 		return phyp_dump_info->reserve_bootvar;
 
 	/* divide by 20 to get 5% of value */
-	tmp = memblock_end_of_DRAM();
+	tmp = lmb_end_of_DRAM();
 	do_div(tmp, 20);
 
 	/* round it down in multiples of 256 */
@@ -673,11 +655,11 @@ static void __init phyp_dump_reserve_mem(void)
 	if (phyp_dump_info->phyp_dump_is_active) {
 		/* Reserve *everything* above RMR.Area freed by userland tools*/
 		base = variable_reserve_size;
-		size = memblock_end_of_DRAM() - base;
+		size = lmb_end_of_DRAM() - base;
 
 		/* XXX crashed_ram_end is wrong, since it may be beyond
 		 * the memory_limit, it will need to be adjusted. */
-		memblock_reserve(base, size);
+		lmb_reserve(base, size);
 
 		phyp_dump_info->init_reserve_start = base;
 		phyp_dump_info->init_reserve_size = size;
@@ -685,8 +667,8 @@ static void __init phyp_dump_reserve_mem(void)
 		size = phyp_dump_info->cpu_state_size +
 			phyp_dump_info->hpte_region_size +
 			variable_reserve_size;
-		base = memblock_end_of_DRAM() - size;
-		memblock_reserve(base, size);
+		base = lmb_end_of_DRAM() - size;
+		lmb_reserve(base, size);
 		phyp_dump_info->init_reserve_start = base;
 		phyp_dump_info->init_reserve_size = size;
 	}
@@ -694,6 +676,7 @@ static void __init phyp_dump_reserve_mem(void)
 #else
 static inline void __init phyp_dump_reserve_mem(void) {}
 #endif /* CONFIG_PHYP_DUMP  && CONFIG_PPC_RTAS */
+
 
 void __init early_init_devtree(void *params)
 {
@@ -709,82 +692,64 @@ void __init early_init_devtree(void *params)
 	of_scan_flat_dt(early_init_dt_scan_rtas, NULL);
 #endif
 
-#ifdef CONFIG_PPC_POWERNV
-	/* Some machines might need OPAL info for debugging, grab it now. */
-	of_scan_flat_dt(early_init_dt_scan_opal, NULL);
-#endif
-
 #ifdef CONFIG_PHYP_DUMP
-	/* scan tree to see if dump occurred during last boot */
+	/* scan tree to see if dump occured during last boot */
 	of_scan_flat_dt(early_init_dt_scan_phyp_dump, NULL);
 #endif
-
-	/* Pre-initialize the cmd_line with the content of boot_commmand_line,
-	 * which will be empty except when the content of the variable has
-	 * been overriden by a bootloading mechanism. This happens typically
-	 * with HAL takeover
-	 */
-	strlcpy(cmd_line, boot_command_line, COMMAND_LINE_SIZE);
 
 	/* Retrieve various informations from the /chosen node of the
 	 * device-tree, including the platform type, initrd location and
 	 * size, TCE reserve, and more ...
 	 */
-	of_scan_flat_dt(early_init_dt_scan_chosen_ppc, cmd_line);
+	of_scan_flat_dt(early_init_dt_scan_chosen, NULL);
 
-	/* Scan memory nodes and rebuild MEMBLOCKs */
+	/* Scan memory nodes and rebuild LMBs */
+	lmb_init();
 	of_scan_flat_dt(early_init_dt_scan_root, NULL);
-	of_scan_flat_dt(early_init_dt_scan_memory_ppc, NULL);
+	of_scan_flat_dt(early_init_dt_scan_memory, NULL);
 
 	/* Save command line for /proc/cmdline and then parse parameters */
 	strlcpy(boot_command_line, cmd_line, COMMAND_LINE_SIZE);
 	parse_early_param();
 
-	/* make sure we've parsed cmdline for mem= before this */
-	if (memory_limit)
-		first_memblock_size = min(first_memblock_size, memory_limit);
-	setup_initial_memory_limit(memstart_addr, first_memblock_size);
-	/* Reserve MEMBLOCK regions used by kernel, initrd, dt, etc... */
-	memblock_reserve(PHYSICAL_START, __pa(klimit) - PHYSICAL_START);
+	/* Reserve LMB regions used by kernel, initrd, dt, etc... */
+	lmb_reserve(PHYSICAL_START, __pa(klimit) - PHYSICAL_START);
 	/* If relocatable, reserve first 32k for interrupt vectors etc. */
 	if (PHYSICAL_START > MEMORY_START)
-		memblock_reserve(MEMORY_START, 0x8000);
+		lmb_reserve(MEMORY_START, 0x8000);
 	reserve_kdump_trampoline();
 	reserve_crashkernel();
 	early_reserve_mem();
 	phyp_dump_reserve_mem();
 
-	/*
-	 * Ensure that total memory size is page-aligned, because otherwise
-	 * mark_bootmem() gets upset.
-	 */
-	limit = ALIGN(memory_limit ?: memblock_phys_mem_size(), PAGE_SIZE);
-	memblock_enforce_memory_limit(limit);
+	limit = memory_limit;
+	if (! limit) {
+		phys_addr_t memsize;
 
-	memblock_allow_resize();
-	memblock_dump_all();
+		/* Ensure that total memory size is page-aligned, because
+		 * otherwise mark_bootmem() gets upset. */
+		lmb_analyze();
+		memsize = lmb_phys_mem_size();
+		if ((memsize & PAGE_MASK) != memsize)
+			limit = memsize & PAGE_MASK;
+	}
+	lmb_enforce_memory_limit(limit);
 
-	DBG("Phys. mem: %llx\n", memblock_phys_mem_size());
+	lmb_analyze();
+	lmb_dump_all();
+
+	DBG("Phys. mem: %llx\n", lmb_phys_mem_size());
 
 	/* We may need to relocate the flat tree, do it now.
 	 * FIXME .. and the initrd too? */
 	move_device_tree();
 
-	allocate_pacas();
-
 	DBG("Scanning CPUs ...\n");
 
-	/* Retrieve CPU related informations from the flat tree
+	/* Retreive CPU related informations from the flat tree
 	 * (altivec support, boot CPU ID, ...)
 	 */
 	of_scan_flat_dt(early_init_dt_scan_cpus, NULL);
-
-#if defined(CONFIG_SMP) && defined(CONFIG_PPC64)
-	/* We'll later wait for secondaries to check in; there are
-	 * NCPUS-1 non-boot CPUs  :-)
-	 */
-	spinning_secondaries = boot_cpu_count - 1;
-#endif
 
 	DBG(" <- early_init_devtree()\n");
 }
@@ -799,6 +764,27 @@ void __init early_init_devtree(void *params)
  * this isn't dealt with yet.
  *
  *******/
+
+/**
+ *	of_find_node_by_phandle - Find a node given a phandle
+ *	@handle:	phandle of the node to find
+ *
+ *	Returns a node pointer with refcount incremented, use
+ *	of_node_put() on it when done.
+ */
+struct device_node *of_find_node_by_phandle(phandle handle)
+{
+	struct device_node *np;
+
+	read_lock(&devtree_lock);
+	for (np = allnodes; np != 0; np = np->allnext)
+		if (np->linux_phandle == handle)
+			break;
+	of_node_get(np);
+	read_unlock(&devtree_lock);
+	return np;
+}
+EXPORT_SYMBOL(of_find_node_by_phandle);
 
 /**
  *	of_find_next_cache_node - Find a node's subsidiary cache
@@ -829,6 +815,65 @@ struct device_node *of_find_next_cache_node(struct device_node *np)
 				return child;
 
 	return NULL;
+}
+
+/*
+ * Plug a device node into the tree and global list.
+ */
+void of_attach_node(struct device_node *np)
+{
+	unsigned long flags;
+
+	write_lock_irqsave(&devtree_lock, flags);
+	np->sibling = np->parent->child;
+	np->allnext = allnodes;
+	np->parent->child = np;
+	allnodes = np;
+	write_unlock_irqrestore(&devtree_lock, flags);
+}
+
+/*
+ * "Unplug" a node from the device tree.  The caller must hold
+ * a reference to the node.  The memory associated with the node
+ * is not freed until its refcount goes to zero.
+ */
+void of_detach_node(struct device_node *np)
+{
+	struct device_node *parent;
+	unsigned long flags;
+
+	write_lock_irqsave(&devtree_lock, flags);
+
+	parent = np->parent;
+	if (!parent)
+		goto out_unlock;
+
+	if (allnodes == np)
+		allnodes = np->allnext;
+	else {
+		struct device_node *prev;
+		for (prev = allnodes;
+		     prev->allnext != np;
+		     prev = prev->allnext)
+			;
+		prev->allnext = np->allnext;
+	}
+
+	if (parent->child == np)
+		parent->child = np->sibling;
+	else {
+		struct device_node *prevsib;
+		for (prevsib = np->parent->child;
+		     prevsib->sibling != np;
+		     prevsib = prevsib->sibling)
+			;
+		prevsib->sibling = np->sibling;
+	}
+
+	of_node_set_flag(np, OF_DETACHED);
+
+out_unlock:
+	write_unlock_irqrestore(&devtree_lock, flags);
 }
 
 #ifdef CONFIG_PPC_PSERIES
@@ -862,9 +907,9 @@ static int of_finish_dynamic_node(struct device_node *node)
 	if (machine_is(powermac))
 		return -ENODEV;
 
-	/* fix up new node's phandle field */
+	/* fix up new node's linux_phandle field */
 	if ((ibm_phandle = of_get_property(node, "ibm,phandle", NULL)))
-		node->phandle = *ibm_phandle;
+		node->linux_phandle = *ibm_phandle;
 
 out:
 	of_node_put(parent);
@@ -879,14 +924,16 @@ static int prom_reconfig_notifier(struct notifier_block *nb,
 	switch (action) {
 	case PSERIES_RECONFIG_ADD:
 		err = of_finish_dynamic_node(node);
-		if (err < 0)
+		if (err < 0) {
 			printk(KERN_ERR "finish_node returned %d\n", err);
+			err = NOTIFY_BAD;
+		}
 		break;
 	default:
-		err = 0;
+		err = NOTIFY_DONE;
 		break;
 	}
-	return notifier_from_errno(err);
+	return err;
 }
 
 static struct notifier_block prom_reconfig_nb = {
