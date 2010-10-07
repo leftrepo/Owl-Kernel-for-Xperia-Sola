@@ -1285,6 +1285,7 @@ int sdio_reset_comm(struct mmc_card *card)
 		mmc_set_bus_width(host, MMC_BUS_WIDTH_4);
 	else if (err)
 		goto err;
+
 	mmc_release_host(host);
 	return 0;
 err:
