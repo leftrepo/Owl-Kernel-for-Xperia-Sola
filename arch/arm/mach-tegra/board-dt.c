@@ -21,6 +21,7 @@
 #include <linux/serial_8250.h>
 #include <linux/clk.h>
 #include <linux/dma-mapping.h>
+#include <linux/irqdomain.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/of_fdt.h>
@@ -103,7 +104,8 @@ static void __init tegra_dt_init(void)
 }
 
 static const char * tegra_dt_board_compat[] = {
-	"nvidia,tegra20",
+	"nvidia,harmony",
+	"nvidia,seaboard",
 	NULL
 };
 
