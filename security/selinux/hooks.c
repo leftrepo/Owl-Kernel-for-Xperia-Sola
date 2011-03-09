@@ -1425,10 +1425,7 @@ static int cred_has_capability(const struct cred *cred,
 	int rc;
 
 	COMMON_AUDIT_DATA_INIT(&ad, CAP);
-<<<<<<< HEAD
 	ad.selinux_audit_data = &sad;
-=======
->>>>>>> 6a9de49... capabilities: remove the task from capable LSM hook entirely
 	ad.tsk = current;
 	ad.u.cap = cap;
 
