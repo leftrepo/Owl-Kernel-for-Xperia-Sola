@@ -12,6 +12,7 @@
 #include <linux/sched.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
+#include <linux/elfcore.h>
 #include <linux/smp.h>
 #include <linux/slab.h>
 #include <linux/interrupt.h>
@@ -74,7 +75,6 @@ static void default_idle(void)
 	if (test_thread_flag(TIF_MCCK_PENDING)) {
 		local_mcck_enable();
 		local_irq_enable();
-		s390_handle_mcck();
 		return;
 	}
 	trace_hardirqs_on();
@@ -91,13 +91,13 @@ void cpu_idle(void)
 	for (;;) {
 		tick_nohz_idle_enter();
 		rcu_idle_enter();
-		while (!need_resched())
+		while (!need_resched() && !test_thread_flag(TIF_MCCK_PENDING))
 			default_idle();
 		rcu_idle_exit();
 		tick_nohz_idle_exit();
-		preempt_enable_no_resched();
-		schedule();
-		preempt_disable();
+		if (test_thread_flag(TIF_MCCK_PENDING))
+			s390_handle_mcck();
+		schedule_preempt_disabled();
 	}
 }
 
@@ -118,7 +118,8 @@ int kernel_thread(int (*fn)(void *), void * arg, unsigned long flags)
 	struct pt_regs regs;
 
 	memset(&regs, 0, sizeof(regs));
-	regs.psw.mask = psw_kernel_bits | PSW_MASK_IO | PSW_MASK_EXT;
+	regs.psw.mask = psw_kernel_bits |
+		PSW_MASK_DAT | PSW_MASK_IO | PSW_MASK_EXT | PSW_MASK_MCHECK;
 	regs.psw.addr = (unsigned long) kernel_thread_starter | PSW_ADDR_AMODE;
 	regs.gprs[9] = (unsigned long) fn;
 	regs.gprs[10] = (unsigned long) arg;

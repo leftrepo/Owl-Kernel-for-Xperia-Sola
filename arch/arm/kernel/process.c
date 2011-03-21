@@ -287,9 +287,7 @@ void cpu_idle(void)
 		idle_notifier_call_chain(IDLE_END);
 		rcu_idle_exit();
 		tick_nohz_idle_exit();
-		preempt_enable_no_resched();
-		schedule();
-		preempt_disable();
+		schedule_preempt_disabled();
 	}
 }
 
