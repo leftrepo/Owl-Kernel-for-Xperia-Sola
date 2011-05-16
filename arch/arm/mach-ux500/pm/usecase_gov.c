@@ -757,7 +757,7 @@ static void usecase_update_user_config(void)
 }
 
 struct usecase_devclass_attr {
-	struct sysdev_class_attribute class_attr;
+	struct device_attribute class_attr;
 	u32 index;
 };
 
@@ -775,8 +775,8 @@ static struct attribute_group dbs_attr_group = {
 	.name = "usecase",
 };
 
-static ssize_t show_current(struct sysdev_class *class,
-			struct sysdev_class_attribute *attr, char *buf)
+static ssize_t show_current(struct device *dev,
+			struct device_attribute *attr, char *buf)
 {
 	enum ux500_uc display_uc = (current_uc == UX500_UC_MAX) ?
 					UX500_UC_NORMAL : current_uc;
@@ -797,14 +797,14 @@ static ssize_t show_current(struct sysdev_class *class,
 		usecase_conf[display_uc].vc_override ? "true" : "false");
 }
 
-static ssize_t show_enable(struct sysdev_class *class,
-			struct sysdev_class_attribute *attr, char *buf)
+static ssize_t show_enable(struct device *dev,
+			struct device_attribute *attr, char *buf)
 {
 	return sprintf(buf, "%d\n", uc_master_enable);
 }
 
-static ssize_t store_enable(struct sysdev_class *class,
-					struct sysdev_class_attribute *attr,
+static ssize_t store_enable(struct device *dev,
+					struct device_attribute *attr,
 				    const char *buf, size_t count)
 {
 	unsigned int input;
@@ -821,8 +821,8 @@ static ssize_t store_enable(struct sysdev_class *class,
 	return count;
 }
 
-static ssize_t show_dc_attr(struct sysdev_class *class,
-			struct sysdev_class_attribute *attr, char *buf)
+static ssize_t show_dc_attr(struct device *dev,
+			struct device_attribute *attr, char *buf)
 {
 	struct usecase_devclass_attr *uattr =
 		container_of(attr, struct usecase_devclass_attr, class_attr);
@@ -831,8 +831,8 @@ static ssize_t show_dc_attr(struct sysdev_class *class,
 				usecase_conf[uattr->index].enable);
 }
 
-static ssize_t store_dc_attr(struct sysdev_class *class,
-					struct sysdev_class_attribute *attr,
+static ssize_t store_dc_attr(struct device *dev,
+					struct device_attribute *attr,
 				    const char *buf, size_t count)
 {
 	unsigned int input;
@@ -903,7 +903,7 @@ static int usecase_sysfs_init(void)
 	dbs_attributes[UX500_ENABLE_NODE_INDEX] =
 		&(usecase_dc_attr[UX500_ENABLE_NODE_INDEX].class_attr.attr);
 
-	err = sysfs_create_group(&(cpu_sysdev_class.kset.kobj),
+	err = sysfs_create_group(&cpu_subsys.dev_root,
 						&dbs_attr_group);
 	if (err)
 		pr_err("usecase-gov: sysfs_create_group"
