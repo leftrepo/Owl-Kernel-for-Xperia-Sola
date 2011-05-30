@@ -297,6 +297,7 @@ static int enter_state(suspend_state_t state)
 	if (!mutex_trylock(&pm_mutex))
 		return -EBUSY;
 
+<<<<<<< HEAD
 	/*
 	 * Assure that previous started thread is completed before
 	 * attempting to suspend again.
@@ -308,6 +309,9 @@ static int enter_state(suspend_state_t state)
 	printk(KERN_INFO "PM: Syncing filesystems ... ");
 	sys_sync();
 	printk("done.\n");
+=======
+	suspend_sys_sync_queue();
+>>>>>>> 7837525... power: fix lcd resume taking long time with an ongoing file copy
 
 	pr_debug("PM: Preparing system for %s sleep\n", pm_states[state]);
 	error = suspend_prepare();
