@@ -128,3 +128,4 @@ obj-$(CONFIG_MODEM)		+= modem/
 obj-$(CONFIG_HWSPINLOCK)	+= hwspinlock/
 obj-$(CONFIG_SEMC_RMI4_BUS)     += rmi4/
 obj-$(CONFIG_MSM_QDSS)		+= coresight/
+obj-$(CONFIG_IOMMU_API)		+= iommu/
