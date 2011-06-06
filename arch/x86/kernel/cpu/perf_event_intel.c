@@ -1549,10 +1549,14 @@ static void intel_pmu_cpu_starting(int cpu)
 	intel_pmu_lbr_reset();
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 	if (!cpuc->shared_regs || (x86_pmu.er_flags & ERF_NO_HT_SHARING))
 =======
 	if (!cpuc->shared_regs)
 >>>>>>> efc9f05... perf_events: Update Intel extra regs shared constraints management
+=======
+	if (!cpuc->shared_regs || x86_pmu.regs_no_ht_sharing)
+>>>>>>> ee89cbc... perf_events: Add Intel Sandy Bridge offcore_response low-level support
 		return;
 
 	for_each_cpu(i, topology_thread_cpumask(cpu)) {
@@ -1800,11 +1804,18 @@ __init int intel_pmu_init(void)
 		intel_pmu_lbr_init_nhm();
 
 		x86_pmu.event_constraints = intel_snb_event_constraints;
+<<<<<<< HEAD
 		x86_pmu.pebs_constraints = intel_snb_pebs_event_constraints;
 		x86_pmu.extra_regs = intel_snb_extra_regs;
 		/* all extra regs are per-cpu when HT is on */
 		x86_pmu.er_flags |= ERF_HAS_RSP_1;
 		x86_pmu.er_flags |= ERF_NO_HT_SHARING;
+=======
+		x86_pmu.pebs_constraints = intel_snb_pebs_events;
+		x86_pmu.extra_regs = intel_snb_extra_regs;
+		/* all extra regs are per-cpu when HT is on */
+		x86_pmu.regs_no_ht_sharing = true;
+>>>>>>> ee89cbc... perf_events: Add Intel Sandy Bridge offcore_response low-level support
 
 		/* UOPS_ISSUED.ANY,c=1,i=1 to count stall cycles */
 		intel_perfmon_event_map[PERF_COUNT_HW_STALLED_CYCLES_FRONTEND] = 0x180010e;
