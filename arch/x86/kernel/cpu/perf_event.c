@@ -46,6 +46,29 @@ do {								\
 #endif
 
 /*
+ *          |   NHM/WSM    |      SNB     |
+ * register -------------------------------
+ *          |  HT  | no HT |  HT  | no HT |
+ *-----------------------------------------
+ * offcore  | core | core  | cpu  | core  |
+ * lbr_sel  | core | core  | cpu  | core  |
+ * ld_lat   | cpu  | core  | cpu  | core  |
+ *-----------------------------------------
+ *
+ * Given that there is a small number of shared regs,
+ * we can pre-allocate their slot in the per-cpu
+ * per-core reg tables.
+ */
+enum extra_reg_type {
+	EXTRA_REG_NONE  = -1,	/* not used */
+
+	EXTRA_REG_RSP_0 = 0,	/* offcore_response_0 */
+	EXTRA_REG_RSP_1 = 1,	/* offcore_response_1 */
+
+	EXTRA_REG_MAX		/* number of entries needed */
+};
+
+/*
  * best effort, GUP based copy_from_user() that assumes IRQ or NMI context
  */
 static unsigned long
@@ -133,11 +156,10 @@ struct cpu_hw_events {
 	struct perf_branch_entry	lbr_entries[MAX_LBR_ENTRIES];
 
 	/*
-	 * Intel percore register state.
-	 * Coordinate shared resources between HT threads.
+	 * manage shared (per-core, per-cpu) registers
+	 * used on Intel NHM/WSM/SNB
 	 */
-	int				percore_used; /* Used by this CPU? */
-	struct intel_percore		*per_core;
+	struct intel_shared_regs	*shared_regs;
 
 	/*
 	 * AMD specific bits
@@ -188,26 +210,45 @@ struct cpu_hw_events {
 	for ((e) = (c); (e)->weight; (e)++)
 
 /*
+ * Per register state.
+ */
+struct er_account {
+	raw_spinlock_t		lock;	/* per-core: protect structure */
+	u64			config;	/* extra MSR config */
+	u64			reg;	/* extra MSR number */
+	atomic_t		ref;	/* reference count */
+};
+
+/*
  * Extra registers for specific events.
+ *
  * Some events need large masks and require external MSRs.
- * Define a mapping to these extra registers.
+ * Those extra MSRs end up being shared for all events on
+ * a PMU and sometimes between PMU of sibling HT threads.
+ * In either case, the kernel needs to handle conflicting
+ * accesses to those extra, shared, regs. The data structure
+ * to manage those registers is stored in cpu_hw_event.
  */
 struct extra_reg {
 	unsigned int		event;
 	unsigned int		msr;
 	u64			config_mask;
 	u64			valid_mask;
+	int			idx;  /* per_xxx->regs[] reg index */
 };
 
-#define EVENT_EXTRA_REG(e, ms, m, vm) {	\
+#define EVENT_EXTRA_REG(e, ms, m, vm, i) {	\
 	.event = (e),		\
 	.msr = (ms),		\
 	.config_mask = (m),	\
 	.valid_mask = (vm),	\
+	.idx = EXTRA_REG_##i	\
 	}
-#define INTEL_EVENT_EXTRA_REG(event, msr, vm)	\
-	EVENT_EXTRA_REG(event, msr, ARCH_PERFMON_EVENTSEL_EVENT, vm)
-#define EVENT_EXTRA_END EVENT_EXTRA_REG(0, 0, 0, 0)
+
+#define INTEL_EVENT_EXTRA_REG(event, msr, vm, idx)	\
+	EVENT_EXTRA_REG(event, msr, ARCH_PERFMON_EVENTSEL_EVENT, vm, idx)
+
+#define EVENT_EXTRA_END EVENT_EXTRA_REG(0, 0, 0, 0, RSP_0)
 
 union perf_capabilities {
 	struct {
@@ -254,7 +295,6 @@ struct x86_pmu {
 	void		(*put_event_constraints)(struct cpu_hw_events *cpuc,
 						 struct perf_event *event);
 	struct event_constraint *event_constraints;
-	struct event_constraint *percore_constraints;
 	void		(*quirks)(void);
 	int		perfctr_second_write;
 
@@ -717,7 +757,19 @@ static void x86_pmu_disable(struct pmu *pmu)
 	x86_pmu.disable_all();
 }
 
+<<<<<<< HEAD
 void x86_pmu_enable_all(int added)
+=======
+static inline void __x86_pmu_enable_event(struct hw_perf_event *hwc,
+					  u64 enable_mask)
+{
+	if (hwc->extra_reg.reg)
+		wrmsrl(hwc->extra_reg.reg, hwc->extra_reg.config);
+	wrmsrl(hwc->config_base, hwc->config | enable_mask);
+}
+
+static void x86_pmu_enable_all(int added)
+>>>>>>> efc9f05... perf_events: Update Intel extra regs shared constraints management
 {
 	struct cpu_hw_events *cpuc = &__get_cpu_var(cpu_hw_events);
 	int idx;
@@ -1592,11 +1644,20 @@ static int validate_group(struct perf_event *event)
 {
 	struct perf_event *leader = event->group_leader;
 	struct cpu_hw_events *fake_cpuc;
+<<<<<<< HEAD
 	int ret = -ENOSPC, n;
 
 	fake_cpuc = allocate_fake_cpuc();
 	if (IS_ERR(fake_cpuc))
 		return PTR_ERR(fake_cpuc);
+=======
+	int ret, n;
+
+	ret = -ENOMEM;
+	fake_cpuc = kmalloc(sizeof(*fake_cpuc), GFP_KERNEL | __GFP_ZERO);
+	if (!fake_cpuc)
+		goto out;
+>>>>>>> efc9f05... perf_events: Update Intel extra regs shared constraints management
 	/*
 	 * the event is not yet connected with its
 	 * siblings therefore we must first collect

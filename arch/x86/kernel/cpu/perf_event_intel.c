@@ -1,9 +1,15 @@
+<<<<<<< HEAD
+=======
+#ifdef CONFIG_CPU_SUP_INTEL
+
+>>>>>>> efc9f05... perf_events: Update Intel extra regs shared constraints management
 /*
  * Per core/cpu state
  *
  * Used to coordinate shared registers between HT threads or
  * among events on a single PMU.
  */
+<<<<<<< HEAD
 
 #include <linux/stddef.h>
 #include <linux/types.h>
@@ -15,6 +21,13 @@
 #include <asm/apic.h>
 
 #include "perf_event.h"
+=======
+struct intel_shared_regs {
+	struct er_account       regs[EXTRA_REG_MAX];
+	int                     refcnt;		/* per-core: #HT threads */
+	unsigned                core_id;	/* per-core: core id */
+};
+>>>>>>> efc9f05... perf_events: Update Intel extra regs shared constraints management
 
 /*
  * Intel PerfMon, used on Core and later.
@@ -116,11 +129,14 @@ static struct extra_reg intel_westmere_extra_regs[] __read_mostly =
 	EVENT_EXTRA_END
 };
 
+<<<<<<< HEAD
 static struct event_constraint intel_v1_event_constraints[] __read_mostly =
 {
 	EVENT_CONSTRAINT_END
 };
 
+=======
+>>>>>>> efc9f05... perf_events: Update Intel extra regs shared constraints management
 static struct event_constraint intel_gen_event_constraints[] __read_mostly =
 {
 	FIXED_EVENT_CONSTRAINT(0x00c0, 0), /* INST_RETIRED.ANY */
@@ -1095,6 +1111,7 @@ intel_bts_constraints(struct perf_event *event)
 	return NULL;
 }
 
+<<<<<<< HEAD
 static bool intel_try_alt_er(struct perf_event *event, int orig_idx)
 {
 	if (!(x86_pmu.er_flags & ERF_HAS_RSP_1))
@@ -1118,6 +1135,8 @@ static bool intel_try_alt_er(struct perf_event *event, int orig_idx)
 	return true;
 }
 
+=======
+>>>>>>> efc9f05... perf_events: Update Intel extra regs shared constraints management
 /*
  * manage allocation of shared extra msr for certain events
  *
@@ -1127,6 +1146,7 @@ static bool intel_try_alt_er(struct perf_event *event, int orig_idx)
  */
 static struct event_constraint *
 __intel_shared_reg_get_constraints(struct cpu_hw_events *cpuc,
+<<<<<<< HEAD
 				   struct perf_event *event)
 {
 	struct event_constraint *c = &emptyconstraint;
@@ -1146,6 +1166,20 @@ again:
 	 * passing a fake cpuc
 	 */
 	raw_spin_lock_irqsave(&era->lock, flags);
+=======
+				   struct hw_perf_event_extra *reg)
+{
+	struct event_constraint *c = &emptyconstraint;
+	struct er_account *era;
+
+	/* already allocated shared msr */
+	if (reg->alloc || !cpuc->shared_regs)
+		return &unconstrained;
+
+	era = &cpuc->shared_regs->regs[reg->idx];
+
+	raw_spin_lock(&era->lock);
+>>>>>>> efc9f05... perf_events: Update Intel extra regs shared constraints management
 
 	if (!atomic_read(&era->ref) || era->config == reg->config) {
 
@@ -1168,6 +1202,7 @@ again:
 		 * the regular event constraint table.
 		 */
 		c = &unconstrained;
+<<<<<<< HEAD
 	} else if (intel_try_alt_er(event, orig_idx)) {
 		raw_spin_unlock(&era->lock);
 		goto again;
@@ -1222,9 +1257,52 @@ x86_get_event_constraints(struct cpu_hw_events *cpuc, struct perf_event *event)
 			if ((event->hw.config & c->cmask) == c->code)
 				return c;
 		}
+=======
+>>>>>>> efc9f05... perf_events: Update Intel extra regs shared constraints management
 	}
+	raw_spin_unlock(&era->lock);
 
+<<<<<<< HEAD
 	return &unconstrained;
+=======
+	return c;
+}
+
+static void
+__intel_shared_reg_put_constraints(struct cpu_hw_events *cpuc,
+				   struct hw_perf_event_extra *reg)
+{
+	struct er_account *era;
+
+	/*
+	 * only put constraint if extra reg was actually
+	 * allocated. Also takes care of event which do
+	 * not use an extra shared reg
+	 */
+	if (!reg->alloc)
+		return;
+
+	era = &cpuc->shared_regs->regs[reg->idx];
+
+	/* one fewer user */
+	atomic_dec(&era->ref);
+
+	/* allocate again next time */
+	reg->alloc = 0;
+}
+
+static struct event_constraint *
+intel_shared_regs_constraints(struct cpu_hw_events *cpuc,
+			      struct perf_event *event)
+{
+	struct event_constraint *c = NULL;
+	struct hw_perf_event_extra *xreg;
+
+	xreg = &event->hw.extra_reg;
+	if (xreg->idx != EXTRA_REG_NONE)
+		c = __intel_shared_reg_get_constraints(cpuc, xreg);
+	return c;
+>>>>>>> efc9f05... perf_events: Update Intel extra regs shared constraints management
 }
 
 static struct event_constraint *
@@ -1412,7 +1490,11 @@ static __initconst const struct x86_pmu core_pmu = {
 	.guest_get_msrs		= core_guest_get_msrs,
 };
 
+<<<<<<< HEAD
 struct intel_shared_regs *allocate_shared_regs(int cpu)
+=======
+static struct intel_shared_regs *allocate_shared_regs(int cpu)
+>>>>>>> efc9f05... perf_events: Update Intel extra regs shared constraints management
 {
 	struct intel_shared_regs *regs;
 	int i;
@@ -1457,7 +1539,11 @@ static void intel_pmu_cpu_starting(int cpu)
 	 */
 	intel_pmu_lbr_reset();
 
+<<<<<<< HEAD
 	if (!cpuc->shared_regs || (x86_pmu.er_flags & ERF_NO_HT_SHARING))
+=======
+	if (!cpuc->shared_regs)
+>>>>>>> efc9f05... perf_events: Update Intel extra regs shared constraints management
 		return;
 
 	for_each_cpu(i, topology_thread_cpumask(cpu)) {
@@ -1465,7 +1551,11 @@ static void intel_pmu_cpu_starting(int cpu)
 
 		pc = per_cpu(cpu_hw_events, i).shared_regs;
 		if (pc && pc->core_id == core_id) {
+<<<<<<< HEAD
 			cpuc->kfree_on_online = cpuc->shared_regs;
+=======
+			kfree(cpuc->shared_regs);
+>>>>>>> efc9f05... perf_events: Update Intel extra regs shared constraints management
 			cpuc->shared_regs = pc;
 			break;
 		}
