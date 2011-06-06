@@ -1645,6 +1645,7 @@ static int validate_group(struct perf_event *event)
 	struct perf_event *leader = event->group_leader;
 	struct cpu_hw_events *fake_cpuc;
 <<<<<<< HEAD
+<<<<<<< HEAD
 	int ret = -ENOSPC, n;
 
 	fake_cpuc = allocate_fake_cpuc();
@@ -1658,6 +1659,13 @@ static int validate_group(struct perf_event *event)
 	if (!fake_cpuc)
 		goto out;
 >>>>>>> efc9f05... perf_events: Update Intel extra regs shared constraints management
+=======
+	int ret = -ENOSPC, n;
+
+	fake_cpuc = allocate_fake_cpuc();
+	if (IS_ERR(fake_cpuc))
+		return PTR_ERR(fake_cpuc);
+>>>>>>> cd8a38d... perf_events: Fix validation of events using an extra reg
 	/*
 	 * the event is not yet connected with its
 	 * siblings therefore we must first collect

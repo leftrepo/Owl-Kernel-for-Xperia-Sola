@@ -1171,15 +1171,24 @@ again:
 {
 	struct event_constraint *c = &emptyconstraint;
 	struct er_account *era;
+	unsigned long flags;
 
 	/* already allocated shared msr */
-	if (reg->alloc || !cpuc->shared_regs)
+	if (reg->alloc)
 		return &unconstrained;
 
 	era = &cpuc->shared_regs->regs[reg->idx];
+<<<<<<< HEAD
 
 	raw_spin_lock(&era->lock);
 >>>>>>> efc9f05... perf_events: Update Intel extra regs shared constraints management
+=======
+	/*
+	 * we use spin_lock_irqsave() to avoid lockdep issues when
+	 * passing a fake cpuc
+	 */
+	raw_spin_lock_irqsave(&era->lock, flags);
+>>>>>>> cd8a38d... perf_events: Fix validation of events using an extra reg
 
 	if (!atomic_read(&era->ref) || era->config == reg->config) {
 
@@ -1260,7 +1269,7 @@ x86_get_event_constraints(struct cpu_hw_events *cpuc, struct perf_event *event)
 =======
 >>>>>>> efc9f05... perf_events: Update Intel extra regs shared constraints management
 	}
-	raw_spin_unlock(&era->lock);
+	raw_spin_unlock_irqrestore(&era->lock, flags);
 
 <<<<<<< HEAD
 	return &unconstrained;
@@ -1822,3 +1831,19 @@ __init int intel_pmu_init(void)
 	}
 	return 0;
 }
+<<<<<<< HEAD
+=======
+
+#else /* CONFIG_CPU_SUP_INTEL */
+
+static int intel_pmu_init(void)
+{
+	return 0;
+}
+
+static struct intel_shared_regs *allocate_shared_regs(int cpu)
+{
+	return NULL;
+}
+#endif /* CONFIG_CPU_SUP_INTEL */
+>>>>>>> cd8a38d... perf_events: Fix validation of events using an extra reg
