@@ -534,6 +534,10 @@ static void ipi_cpu_stop(unsigned int cpu)
 					  smp_processor_id());
 #endif
 
+#ifdef CONFIG_HOTPLUG_CPU
+	platform_cpu_kill(cpu);
+#endif
+
 	while (1)
 		cpu_relax();
 }
