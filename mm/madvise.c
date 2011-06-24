@@ -228,6 +228,7 @@ static long madvise_remove(struct vm_area_struct *vma,
 	 * we drop mmap_sem.
 	 */
 	get_file(f);
+	/* vmtruncate_range needs to take i_mutex */
 	up_read(&current->mm->mmap_sem);
 	error = vmtruncate_range(mapping->host, offset, endoff);
 	fput(f);
