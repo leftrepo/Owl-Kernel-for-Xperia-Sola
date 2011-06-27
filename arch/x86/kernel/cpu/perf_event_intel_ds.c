@@ -326,7 +326,11 @@ int intel_pmu_drain_bts_buffer(void)
 	 */
 	perf_prepare_sample(&header, &data, event, &regs);
 
+<<<<<<< HEAD
 	if (perf_output_begin(&handle, event, header.size * (top - at)))
+=======
+	if (perf_output_begin(&handle, event, header.size * (top - at), 1))
+>>>>>>> a8b0ca1... perf: Remove the nmi parameter from the swevent and overflow interface
 		return 1;
 
 	for (; at < top; at++) {
