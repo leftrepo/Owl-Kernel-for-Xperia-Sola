@@ -130,13 +130,19 @@ static struct extra_reg intel_westmere_extra_regs[] __read_mostly =
 };
 
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> 0af3ac1... x86, perf: Add constraints for architectural PMU
 static struct event_constraint intel_v1_event_constraints[] __read_mostly =
 {
 	EVENT_CONSTRAINT_END
 };
 
+<<<<<<< HEAD
 =======
 >>>>>>> efc9f05... perf_events: Update Intel extra regs shared constraints management
+=======
+>>>>>>> 0af3ac1... x86, perf: Add constraints for architectural PMU
 static struct event_constraint intel_gen_event_constraints[] __read_mostly =
 {
 	FIXED_EVENT_CONSTRAINT(0x00c0, 0), /* INST_RETIRED.ANY */
