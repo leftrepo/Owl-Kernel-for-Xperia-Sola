@@ -311,6 +311,26 @@ static void omap34xx_do_sram_idle(unsigned long save_state)
 {
 	_omap_sram_idle(omap3_arm_context, save_state);
 }
+static void omap34xx_save_context(u32 *save)
+{
+	u32 val;
+
+	/* Read Auxiliary Control Register */
+	asm("mrc p15, 0, %0, c1, c0, 1" : "=r" (val));
+	*save++ = 1;
+	*save++ = val;
+
+	/* Read L2 AUX ctrl register */
+	asm("mrc p15, 1, %0, c9, c0, 2" : "=r" (val));
+	*save++ = 1;
+	*save++ = val;
+}
+
+static int omap34xx_do_sram_idle(unsigned long save_state)
+{
+	omap34xx_cpu_suspend(save_state);
+	return 0;
+}
 
 void omap_sram_idle(void)
 {
