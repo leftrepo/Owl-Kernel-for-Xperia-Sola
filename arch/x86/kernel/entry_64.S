@@ -299,26 +299,27 @@ ENDPROC(native_usergs_sysret64)
 	.endm
 
 /* save partial stack frame */
-	.macro SAVE_ARGS_IRQ
+	.pushsection .kprobes.text, "ax"
+ENTRY(save_args)
+	XCPT_FRAME
 	cld
-	/* start from rbp in pt_regs and jump over */
-	movq_cfi rdi, RDI-RBP
-	movq_cfi rsi, RSI-RBP
-	movq_cfi rdx, RDX-RBP
-	movq_cfi rcx, RCX-RBP
-	movq_cfi rax, RAX-RBP
-	movq_cfi  r8,  R8-RBP
-	movq_cfi  r9,  R9-RBP
-	movq_cfi r10, R10-RBP
-	movq_cfi r11, R11-RBP
+	/*
+	 * start from rbp in pt_regs and jump over
+	 * return address.
+	 */
+	movq_cfi rdi, RDI+8-RBP
+	movq_cfi rsi, RSI+8-RBP
+	movq_cfi rdx, RDX+8-RBP
+	movq_cfi rcx, RCX+8-RBP
+	movq_cfi rax, RAX+8-RBP
+	movq_cfi  r8,  R8+8-RBP
+	movq_cfi  r9,  R9+8-RBP
+	movq_cfi r10, R10+8-RBP
+	movq_cfi r11, R11+8-RBP
 
-	/* Save rbp so that we can unwind from get_irq_regs() */
-	movq_cfi rbp, 0
-
-	/* Save previous stack value */
-	movq %rsp, %rsi
-
-	leaq -RBP(%rsp),%rdi	/* arg1 for handler */
+	leaq -RBP+8(%rsp),%rdi	/* arg1 for handler */
+	movq_cfi rbp, 8		/* push %rbp */
+	leaq 8(%rsp), %rbp		/* mov %rsp, %ebp */
 	testl $3, CS(%rdi)
 	je 1f
 	SWAPGS
@@ -330,19 +331,19 @@ ENDPROC(native_usergs_sysret64)
 	 */
 1:	incl PER_CPU_VAR(irq_count)
 	jne 2f
+	popq_cfi %rax			/* move return address... */
 	mov PER_CPU_VAR(irq_stack_ptr),%rsp
-	CFI_DEF_CFA_REGISTER	rsi
-
-2:	/* Store previous stack value */
-	pushq %rsi
-	CFI_ESCAPE	0x0f /* DW_CFA_def_cfa_expression */, 6, \
-			0x77 /* DW_OP_breg7 */, 0, \
-			0x06 /* DW_OP_deref */, \
-			0x08 /* DW_OP_const1u */, SS+8-RBP, \
-			0x22 /* DW_OP_plus */
-	/* We entered an interrupt context - irqs are off: */
-	TRACE_IRQS_OFF
-	.endm
+	EMPTY_FRAME 0
+	pushq_cfi %rbp			/* backlink for unwinder */
+	pushq_cfi %rax			/* ... to the new stack */
+	/*
+	 * We entered an interrupt context - irqs are off:
+	 */
+2:	TRACE_IRQS_OFF
+	ret
+	CFI_ENDPROC
+END(save_args)
+	.popsection
 
 ENTRY(save_rest)
 	PARTIAL_FRAME 1 REST_SKIP+8
@@ -474,7 +475,7 @@ ENTRY(system_call_after_swapgs)
 	 * and short:
 	 */
 	ENABLE_INTERRUPTS(CLBR_NONE)
-	SAVE_ARGS 8,0
+	SAVE_ARGS 8,1
 	movq  %rax,ORIG_RAX-ARGOFFSET(%rsp)
 	movq  %rcx,RIP-ARGOFFSET(%rsp)
 	CFI_REL_OFFSET rip,RIP-ARGOFFSET
@@ -509,7 +510,7 @@ sysret_check:
 	TRACE_IRQS_ON
 	movq RIP-ARGOFFSET(%rsp),%rcx
 	CFI_REGISTER	rip,rcx
-	RESTORE_ARGS 1,-ARG_SKIP,0
+	RESTORE_ARGS 0,-ARG_SKIP,1
 	/*CFI_REGISTER	rflags,r11*/
 	movq	PER_CPU_VAR(old_rsp), %rsp
 	USERGS_SYSRET64
@@ -792,7 +793,8 @@ END(interrupt)
 	/* reserve pt_regs for scratch regs and rbp */
 	subq $ORIG_RAX-RBP, %rsp
 	CFI_ADJUST_CFA_OFFSET ORIG_RAX-RBP
-	SAVE_ARGS_IRQ
+	call save_args
+	PARTIAL_FRAME 0
 	call \func
 	.endm
 
@@ -814,14 +816,15 @@ ret_from_intr:
 	DISABLE_INTERRUPTS(CLBR_NONE)
 	TRACE_IRQS_OFF
 	decl PER_CPU_VAR(irq_count)
+	leaveq
 
-	/* Restore saved previous stack */
-	popq %rsi
-	CFI_DEF_CFA_REGISTER	rsi
-	leaq ARGOFFSET-RBP(%rsi), %rsp
+	CFI_RESTORE		rbp
 	CFI_DEF_CFA_REGISTER	rsp
-	CFI_ADJUST_CFA_OFFSET	RBP-ARGOFFSET
+	CFI_ADJUST_CFA_OFFSET	-8
 
+	/* we did not save rbx, restore only from ARGOFFSET */
+	addq $8, %rsp
+	CFI_ADJUST_CFA_OFFSET	-8
 exit_intr:
 	GET_THREAD_INFO(%rcx)
 	testl $3,CS-ARGOFFSET(%rsp)
@@ -857,7 +860,7 @@ retint_restore_args:	/* return to kernel space */
 	 */
 	TRACE_IRQS_IRETQ
 restore_args:
-	RESTORE_ARGS 1,8,1
+	RESTORE_ARGS 0,8,0
 
 irq_return:
 	INTERRUPT_RETURN
@@ -990,6 +993,11 @@ apicinterrupt THRESHOLD_APIC_VECTOR \
 apicinterrupt THERMAL_APIC_VECTOR \
 	thermal_interrupt smp_thermal_interrupt
 
+#ifdef CONFIG_X86_MCE
+apicinterrupt MCE_SELF_VECTOR \
+	mce_self_interrupt smp_mce_self_interrupt
+#endif
+
 #ifdef CONFIG_SMP
 apicinterrupt CALL_FUNCTION_SINGLE_VECTOR \
 	call_function_single_interrupt smp_call_function_single_interrupt
@@ -1115,6 +1123,7 @@ zeroentry spurious_interrupt_bug do_spurious_interrupt_bug
 zeroentry coprocessor_error do_coprocessor_error
 errorentry alignment_check do_alignment_check
 zeroentry simd_coprocessor_error do_simd_coprocessor_error
+zeroentry emulate_vsyscall do_emulate_vsyscall
 
 
 	/* Reload gs selector with exception handling */

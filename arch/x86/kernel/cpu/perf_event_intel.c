@@ -1,33 +1,26 @@
-<<<<<<< HEAD
-=======
 #ifdef CONFIG_CPU_SUP_INTEL
 
->>>>>>> efc9f05... perf_events: Update Intel extra regs shared constraints management
+#define MAX_EXTRA_REGS 2
+
 /*
- * Per core/cpu state
- *
- * Used to coordinate shared registers between HT threads or
- * among events on a single PMU.
+ * Per register state.
  */
-<<<<<<< HEAD
-
-#include <linux/stddef.h>
-#include <linux/types.h>
-#include <linux/init.h>
-#include <linux/slab.h>
-#include <linux/export.h>
-
-#include <asm/hardirq.h>
-#include <asm/apic.h>
-
-#include "perf_event.h"
-=======
-struct intel_shared_regs {
-	struct er_account       regs[EXTRA_REG_MAX];
-	int                     refcnt;		/* per-core: #HT threads */
-	unsigned                core_id;	/* per-core: core id */
+struct er_account {
+	int			ref;		/* reference count */
+	unsigned int		extra_reg;	/* extra MSR number */
+	u64			extra_config;	/* extra MSR config */
 };
->>>>>>> efc9f05... perf_events: Update Intel extra regs shared constraints management
+
+/*
+ * Per core state
+ * This used to coordinate shared registers for HT threads.
+ */
+struct intel_percore {
+	raw_spinlock_t		lock;		/* protect structure */
+	struct er_account	regs[MAX_EXTRA_REGS];
+	int			refcnt;		/* number of threads */
+	unsigned		core_id;
+};
 
 /*
  * Intel PerfMon, used on Core and later.
@@ -95,8 +88,14 @@ static struct event_constraint intel_nehalem_event_constraints[] __read_mostly =
 
 static struct extra_reg intel_nehalem_extra_regs[] __read_mostly =
 {
-	INTEL_EVENT_EXTRA_REG(0xb7, MSR_OFFCORE_RSP_0, 0xffff, RSP_0),
+	INTEL_EVENT_EXTRA_REG(0xb7, MSR_OFFCORE_RSP_0, 0xffff),
 	EVENT_EXTRA_END
+};
+
+static struct event_constraint intel_nehalem_percore_constraints[] __read_mostly =
+{
+	INTEL_EVENT_CONSTRAINT(0xb7, 0),
+	EVENT_CONSTRAINT_END
 };
 
 static struct event_constraint intel_westmere_event_constraints[] __read_mostly =
@@ -117,6 +116,8 @@ static struct event_constraint intel_snb_event_constraints[] __read_mostly =
 	FIXED_EVENT_CONSTRAINT(0x003c, 1), /* CPU_CLK_UNHALTED.CORE */
 	/* FIXED_EVENT_CONSTRAINT(0x013c, 2), CPU_CLK_UNHALTED.REF */
 	INTEL_EVENT_CONSTRAINT(0x48, 0x4), /* L1D_PEND_MISS.PENDING */
+	INTEL_EVENT_CONSTRAINT(0xb7, 0x1), /* OFF_CORE_RESPONSE_0 */
+	INTEL_EVENT_CONSTRAINT(0xbb, 0x8), /* OFF_CORE_RESPONSE_1 */
 	INTEL_UEVENT_CONSTRAINT(0x01c0, 0x2), /* INST_RETIRED.PREC_DIST */
 	INTEL_EVENT_CONSTRAINT(0xcd, 0x8), /* MEM_TRANS_RETIRED.LOAD_LATENCY */
 	EVENT_CONSTRAINT_END
@@ -124,37 +125,24 @@ static struct event_constraint intel_snb_event_constraints[] __read_mostly =
 
 static struct extra_reg intel_westmere_extra_regs[] __read_mostly =
 {
-	INTEL_EVENT_EXTRA_REG(0xb7, MSR_OFFCORE_RSP_0, 0xffff, RSP_0),
-	INTEL_EVENT_EXTRA_REG(0xbb, MSR_OFFCORE_RSP_1, 0xffff, RSP_1),
+	INTEL_EVENT_EXTRA_REG(0xb7, MSR_OFFCORE_RSP_0, 0xffff),
+	INTEL_EVENT_EXTRA_REG(0xbb, MSR_OFFCORE_RSP_1, 0xffff),
 	EVENT_EXTRA_END
 };
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> 0af3ac1... x86, perf: Add constraints for architectural PMU
-static struct event_constraint intel_v1_event_constraints[] __read_mostly =
+static struct event_constraint intel_westmere_percore_constraints[] __read_mostly =
 {
+	INTEL_EVENT_CONSTRAINT(0xb7, 0),
+	INTEL_EVENT_CONSTRAINT(0xbb, 0),
 	EVENT_CONSTRAINT_END
 };
 
-<<<<<<< HEAD
-=======
->>>>>>> efc9f05... perf_events: Update Intel extra regs shared constraints management
-=======
->>>>>>> 0af3ac1... x86, perf: Add constraints for architectural PMU
 static struct event_constraint intel_gen_event_constraints[] __read_mostly =
 {
 	FIXED_EVENT_CONSTRAINT(0x00c0, 0), /* INST_RETIRED.ANY */
 	FIXED_EVENT_CONSTRAINT(0x003c, 1), /* CPU_CLK_UNHALTED.CORE */
 	/* FIXED_EVENT_CONSTRAINT(0x013c, 2), CPU_CLK_UNHALTED.REF */
 	EVENT_CONSTRAINT_END
-};
-
-static struct extra_reg intel_snb_extra_regs[] __read_mostly = {
-	INTEL_EVENT_EXTRA_REG(0xb7, MSR_OFFCORE_RSP_0, 0x3fffffffffull, RSP_0),
-	INTEL_EVENT_EXTRA_REG(0xbb, MSR_OFFCORE_RSP_1, 0x3fffffffffull, RSP_1),
-	EVENT_EXTRA_END
 };
 
 static u64 intel_pmu_event_map(int hw_event)
@@ -257,21 +245,6 @@ static __initconst const u64 snb_hw_cache_event_ids
 		[ C(RESULT_MISS)   ] = -1,
 	},
  },
- [ C(NODE) ] = {
-	[ C(OP_READ) ] = {
-		[ C(RESULT_ACCESS) ] = -1,
-		[ C(RESULT_MISS)   ] = -1,
-	},
-	[ C(OP_WRITE) ] = {
-		[ C(RESULT_ACCESS) ] = -1,
-		[ C(RESULT_MISS)   ] = -1,
-	},
-	[ C(OP_PREFETCH) ] = {
-		[ C(RESULT_ACCESS) ] = -1,
-		[ C(RESULT_MISS)   ] = -1,
-	},
- },
-
 };
 
 static __initconst const u64 westmere_hw_cache_event_ids
@@ -373,20 +346,6 @@ static __initconst const u64 westmere_hw_cache_event_ids
 		[ C(RESULT_MISS)   ] = -1,
 	},
  },
- [ C(NODE) ] = {
-	[ C(OP_READ) ] = {
-		[ C(RESULT_ACCESS) ] = 0x01b7,
-		[ C(RESULT_MISS)   ] = 0x01b7,
-	},
-	[ C(OP_WRITE) ] = {
-		[ C(RESULT_ACCESS) ] = 0x01b7,
-		[ C(RESULT_MISS)   ] = 0x01b7,
-	},
-	[ C(OP_PREFETCH) ] = {
-		[ C(RESULT_ACCESS) ] = 0x01b7,
-		[ C(RESULT_MISS)   ] = 0x01b7,
-	},
- },
 };
 
 /*
@@ -439,21 +398,7 @@ static __initconst const u64 nehalem_hw_cache_extra_regs
 		[ C(RESULT_ACCESS) ] = NHM_DMND_PREFETCH|NHM_L3_ACCESS,
 		[ C(RESULT_MISS)   ] = NHM_DMND_PREFETCH|NHM_L3_MISS,
 	},
- },
- [ C(NODE) ] = {
-	[ C(OP_READ) ] = {
-		[ C(RESULT_ACCESS) ] = NHM_DMND_READ|NHM_ALL_DRAM,
-		[ C(RESULT_MISS)   ] = NHM_DMND_READ|NHM_REMOTE_DRAM,
-	},
-	[ C(OP_WRITE) ] = {
-		[ C(RESULT_ACCESS) ] = NHM_DMND_WRITE|NHM_ALL_DRAM,
-		[ C(RESULT_MISS)   ] = NHM_DMND_WRITE|NHM_REMOTE_DRAM,
-	},
-	[ C(OP_PREFETCH) ] = {
-		[ C(RESULT_ACCESS) ] = NHM_DMND_PREFETCH|NHM_ALL_DRAM,
-		[ C(RESULT_MISS)   ] = NHM_DMND_PREFETCH|NHM_REMOTE_DRAM,
-	},
- },
+ }
 };
 
 static __initconst const u64 nehalem_hw_cache_event_ids
@@ -553,20 +498,6 @@ static __initconst const u64 nehalem_hw_cache_event_ids
 	[ C(OP_PREFETCH) ] = {
 		[ C(RESULT_ACCESS) ] = -1,
 		[ C(RESULT_MISS)   ] = -1,
-	},
- },
- [ C(NODE) ] = {
-	[ C(OP_READ) ] = {
-		[ C(RESULT_ACCESS) ] = 0x01b7,
-		[ C(RESULT_MISS)   ] = 0x01b7,
-	},
-	[ C(OP_WRITE) ] = {
-		[ C(RESULT_ACCESS) ] = 0x01b7,
-		[ C(RESULT_MISS)   ] = 0x01b7,
-	},
-	[ C(OP_PREFETCH) ] = {
-		[ C(RESULT_ACCESS) ] = 0x01b7,
-		[ C(RESULT_MISS)   ] = 0x01b7,
 	},
  },
 };
@@ -772,8 +703,7 @@ static void intel_pmu_enable_all(int added)
 
 	intel_pmu_pebs_enable_all();
 	intel_pmu_lbr_enable_all();
-	wrmsrl(MSR_CORE_PERF_GLOBAL_CTRL,
-			x86_pmu.intel_ctrl & ~cpuc->intel_ctrl_guest_mask);
+	wrmsrl(MSR_CORE_PERF_GLOBAL_CTRL, x86_pmu.intel_ctrl);
 
 	if (test_bit(X86_PMC_IDX_FIXED_BTS, cpuc->active_mask)) {
 		struct perf_event *event =
@@ -896,16 +826,12 @@ static void intel_pmu_disable_fixed(struct hw_perf_event *hwc)
 static void intel_pmu_disable_event(struct perf_event *event)
 {
 	struct hw_perf_event *hwc = &event->hw;
-	struct cpu_hw_events *cpuc = &__get_cpu_var(cpu_hw_events);
 
 	if (unlikely(hwc->idx == X86_PMC_IDX_FIXED_BTS)) {
 		intel_pmu_disable_bts();
 		intel_pmu_drain_bts_buffer();
 		return;
 	}
-
-	cpuc->intel_ctrl_guest_mask &= ~(1ull << hwc->idx);
-	cpuc->intel_ctrl_host_mask &= ~(1ull << hwc->idx);
 
 	if (unlikely(hwc->config_base == MSR_ARCH_PERFMON_FIXED_CTR_CTRL)) {
 		intel_pmu_disable_fixed(hwc);
@@ -952,7 +878,6 @@ static void intel_pmu_enable_fixed(struct hw_perf_event *hwc)
 static void intel_pmu_enable_event(struct perf_event *event)
 {
 	struct hw_perf_event *hwc = &event->hw;
-	struct cpu_hw_events *cpuc = &__get_cpu_var(cpu_hw_events);
 
 	if (unlikely(hwc->idx == X86_PMC_IDX_FIXED_BTS)) {
 		if (!__this_cpu_read(cpu_hw_events.enabled))
@@ -961,11 +886,6 @@ static void intel_pmu_enable_event(struct perf_event *event)
 		intel_pmu_enable_bts(hwc->config);
 		return;
 	}
-
-	if (event->attr.exclude_host)
-		cpuc->intel_ctrl_guest_mask |= (1ull << hwc->idx);
-	if (event->attr.exclude_guest)
-		cpuc->intel_ctrl_host_mask |= (1ull << hwc->idx);
 
 	if (unlikely(hwc->config_base == MSR_ARCH_PERFMON_FIXED_CTR_CTRL)) {
 		intel_pmu_enable_fixed(hwc);
@@ -982,7 +902,7 @@ static void intel_pmu_enable_event(struct perf_event *event)
  * Save and restart an expired event. Called by NMI contexts,
  * so it has to be careful about preempting normal event ops:
  */
-int intel_pmu_save_and_restart(struct perf_event *event)
+static int intel_pmu_save_and_restart(struct perf_event *event)
 {
 	x86_perf_event_update(event);
 	return x86_perf_event_set_period(event);
@@ -1083,7 +1003,7 @@ again:
 
 		data.period = event->hw.last_period;
 
-		if (perf_event_overflow(event, &data, regs))
+		if (perf_event_overflow(event, 1, &data, regs))
 			x86_pmu_stop(event, 0);
 	}
 
@@ -1117,225 +1037,65 @@ intel_bts_constraints(struct perf_event *event)
 	return NULL;
 }
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> b79e894... perf, intel: Try alternative OFFCORE encodings
-static bool intel_try_alt_er(struct perf_event *event, int orig_idx)
-{
-	if (!(x86_pmu.er_flags & ERF_HAS_RSP_1))
-		return false;
-
-	if (event->hw.extra_reg.idx == EXTRA_REG_RSP_0) {
-		event->hw.config &= ~INTEL_ARCH_EVENT_MASK;
-		event->hw.config |= 0x01bb;
-		event->hw.extra_reg.idx = EXTRA_REG_RSP_1;
-		event->hw.extra_reg.reg = MSR_OFFCORE_RSP_1;
-	} else if (event->hw.extra_reg.idx == EXTRA_REG_RSP_1) {
-		event->hw.config &= ~INTEL_ARCH_EVENT_MASK;
-		event->hw.config |= 0x01b7;
-		event->hw.extra_reg.idx = EXTRA_REG_RSP_0;
-		event->hw.extra_reg.reg = MSR_OFFCORE_RSP_0;
-	}
-
-	if (event->hw.extra_reg.idx == orig_idx)
-		return false;
-
-	return true;
-}
-
-<<<<<<< HEAD
-=======
->>>>>>> efc9f05... perf_events: Update Intel extra regs shared constraints management
-=======
->>>>>>> b79e894... perf, intel: Try alternative OFFCORE encodings
-/*
- * manage allocation of shared extra msr for certain events
- *
- * sharing can be:
- * per-cpu: to be shared between the various events on a single PMU
- * per-core: per-cpu + shared by HT threads
- */
 static struct event_constraint *
-__intel_shared_reg_get_constraints(struct cpu_hw_events *cpuc,
-<<<<<<< HEAD
-<<<<<<< HEAD
-				   struct perf_event *event)
+intel_percore_constraints(struct cpu_hw_events *cpuc, struct perf_event *event)
 {
-	struct event_constraint *c = &emptyconstraint;
-	struct hw_perf_event_extra *reg = &event->hw.extra_reg;
+	struct hw_perf_event *hwc = &event->hw;
+	unsigned int e = hwc->config & ARCH_PERFMON_EVENTSEL_EVENT;
+	struct event_constraint *c;
+	struct intel_percore *pc;
 	struct er_account *era;
-	unsigned long flags;
-	int orig_idx = reg->idx;
+	int i;
+	int free_slot;
+	int found;
 
-	/* already allocated shared msr */
-	if (reg->alloc)
-		return &unconstrained;
+	if (!x86_pmu.percore_constraints || hwc->extra_alloc)
+		return NULL;
 
-again:
-	era = &cpuc->shared_regs->regs[reg->idx];
-	/*
-	 * we use spin_lock_irqsave() to avoid lockdep issues when
-	 * passing a fake cpuc
-	 */
-	raw_spin_lock_irqsave(&era->lock, flags);
-=======
-				   struct hw_perf_event_extra *reg)
-=======
-				   struct perf_event *event)
->>>>>>> b79e894... perf, intel: Try alternative OFFCORE encodings
-{
-	struct event_constraint *c = &emptyconstraint;
-	struct hw_perf_event_extra *reg = &event->hw.extra_reg;
-	struct er_account *era;
-	unsigned long flags;
-	int orig_idx = reg->idx;
-
-	/* already allocated shared msr */
-	if (reg->alloc)
-		return &unconstrained;
-
-again:
-	era = &cpuc->shared_regs->regs[reg->idx];
-<<<<<<< HEAD
-
-	raw_spin_lock(&era->lock);
->>>>>>> efc9f05... perf_events: Update Intel extra regs shared constraints management
-=======
-	/*
-	 * we use spin_lock_irqsave() to avoid lockdep issues when
-	 * passing a fake cpuc
-	 */
-	raw_spin_lock_irqsave(&era->lock, flags);
->>>>>>> cd8a38d... perf_events: Fix validation of events using an extra reg
-
-	if (!atomic_read(&era->ref) || era->config == reg->config) {
-
-		/* lock in msr value */
-		era->config = reg->config;
-		era->reg = reg->reg;
-
-		/* one more user */
-		atomic_inc(&era->ref);
-
-		/* no need to reallocate during incremental event scheduling */
-		reg->alloc = 1;
+	for (c = x86_pmu.percore_constraints; c->cmask; c++) {
+		if (e != c->code)
+			continue;
 
 		/*
-		 * All events using extra_reg are unconstrained.
-		 * Avoids calling x86_get_event_constraints()
-		 *
-		 * Must revisit if extra_reg controlling events
-		 * ever have constraints. Worst case we go through
-		 * the regular event constraint table.
+		 * Allocate resource per core.
 		 */
-		c = &unconstrained;
-<<<<<<< HEAD
-<<<<<<< HEAD
-	} else if (intel_try_alt_er(event, orig_idx)) {
-		raw_spin_unlock(&era->lock);
-		goto again;
-	}
-	raw_spin_unlock_irqrestore(&era->lock, flags);
-
-	return c;
-}
-
-static void
-__intel_shared_reg_put_constraints(struct cpu_hw_events *cpuc,
-				   struct hw_perf_event_extra *reg)
-{
-	struct er_account *era;
-
-	/*
-	 * only put constraint if extra reg was actually
-	 * allocated. Also takes care of event which do
-	 * not use an extra shared reg
-	 */
-	if (!reg->alloc)
-		return;
-
-	era = &cpuc->shared_regs->regs[reg->idx];
-
-	/* one fewer user */
-	atomic_dec(&era->ref);
-
-	/* allocate again next time */
-	reg->alloc = 0;
-}
-
-static struct event_constraint *
-intel_shared_regs_constraints(struct cpu_hw_events *cpuc,
-			      struct perf_event *event)
-{
-	struct event_constraint *c = NULL;
-
-	if (event->hw.extra_reg.idx != EXTRA_REG_NONE)
-		c = __intel_shared_reg_get_constraints(cpuc, event);
-
-	return c;
-}
-
-struct event_constraint *
-x86_get_event_constraints(struct cpu_hw_events *cpuc, struct perf_event *event)
-{
-	struct event_constraint *c;
-
-	if (x86_pmu.event_constraints) {
-		for_each_event_constraint(c, x86_pmu.event_constraints) {
-			if ((event->hw.config & c->cmask) == c->code)
-				return c;
+		pc = cpuc->per_core;
+		if (!pc)
+			break;
+		c = &emptyconstraint;
+		raw_spin_lock(&pc->lock);
+		free_slot = -1;
+		found = 0;
+		for (i = 0; i < MAX_EXTRA_REGS; i++) {
+			era = &pc->regs[i];
+			if (era->ref > 0 && hwc->extra_reg == era->extra_reg) {
+				/* Allow sharing same config */
+				if (hwc->extra_config == era->extra_config) {
+					era->ref++;
+					cpuc->percore_used = 1;
+					hwc->extra_alloc = 1;
+					c = NULL;
+				}
+				/* else conflict */
+				found = 1;
+				break;
+			} else if (era->ref == 0 && free_slot == -1)
+				free_slot = i;
 		}
-=======
->>>>>>> efc9f05... perf_events: Update Intel extra regs shared constraints management
-=======
-	} else if (intel_try_alt_er(event, orig_idx)) {
-		raw_spin_unlock(&era->lock);
-		goto again;
->>>>>>> b79e894... perf, intel: Try alternative OFFCORE encodings
+		if (!found && free_slot != -1) {
+			era = &pc->regs[free_slot];
+			era->ref = 1;
+			era->extra_reg = hwc->extra_reg;
+			era->extra_config = hwc->extra_config;
+			cpuc->percore_used = 1;
+			hwc->extra_alloc = 1;
+			c = NULL;
+		}
+		raw_spin_unlock(&pc->lock);
+		return c;
 	}
-	raw_spin_unlock_irqrestore(&era->lock, flags);
 
-<<<<<<< HEAD
-	return &unconstrained;
-=======
-	return c;
-}
-
-static void
-__intel_shared_reg_put_constraints(struct cpu_hw_events *cpuc,
-				   struct hw_perf_event_extra *reg)
-{
-	struct er_account *era;
-
-	/*
-	 * only put constraint if extra reg was actually
-	 * allocated. Also takes care of event which do
-	 * not use an extra shared reg
-	 */
-	if (!reg->alloc)
-		return;
-
-	era = &cpuc->shared_regs->regs[reg->idx];
-
-	/* one fewer user */
-	atomic_dec(&era->ref);
-
-	/* allocate again next time */
-	reg->alloc = 0;
-}
-
-static struct event_constraint *
-intel_shared_regs_constraints(struct cpu_hw_events *cpuc,
-			      struct perf_event *event)
-{
-	struct event_constraint *c = NULL;
-
-	if (event->hw.extra_reg.idx != EXTRA_REG_NONE)
-		c = __intel_shared_reg_get_constraints(cpuc, event);
-
-	return c;
->>>>>>> efc9f05... perf_events: Update Intel extra regs shared constraints management
+	return NULL;
 }
 
 static struct event_constraint *
@@ -1351,28 +1111,49 @@ intel_get_event_constraints(struct cpu_hw_events *cpuc, struct perf_event *event
 	if (c)
 		return c;
 
-	c = intel_shared_regs_constraints(cpuc, event);
+	c = intel_percore_constraints(cpuc, event);
 	if (c)
 		return c;
 
 	return x86_get_event_constraints(cpuc, event);
 }
 
-static void
-intel_put_shared_regs_event_constraints(struct cpu_hw_events *cpuc,
-					struct perf_event *event)
-{
-	struct hw_perf_event_extra *reg;
-
-	reg = &event->hw.extra_reg;
-	if (reg->idx != EXTRA_REG_NONE)
-		__intel_shared_reg_put_constraints(cpuc, reg);
-}
-
 static void intel_put_event_constraints(struct cpu_hw_events *cpuc,
 					struct perf_event *event)
 {
-	intel_put_shared_regs_event_constraints(cpuc, event);
+	struct extra_reg *er;
+	struct intel_percore *pc;
+	struct er_account *era;
+	struct hw_perf_event *hwc = &event->hw;
+	int i, allref;
+
+	if (!cpuc->percore_used)
+		return;
+
+	for (er = x86_pmu.extra_regs; er->msr; er++) {
+		if (er->event != (hwc->config & er->config_mask))
+			continue;
+
+		pc = cpuc->per_core;
+		raw_spin_lock(&pc->lock);
+		for (i = 0; i < MAX_EXTRA_REGS; i++) {
+			era = &pc->regs[i];
+			if (era->ref > 0 &&
+			    era->extra_config == hwc->extra_config &&
+			    era->extra_reg == er->msr) {
+				era->ref--;
+				hwc->extra_alloc = 0;
+				break;
+			}
+		}
+		allref = 0;
+		for (i = 0; i < MAX_EXTRA_REGS; i++)
+			allref += pc->regs[i].ref;
+		if (allref == 0)
+			cpuc->percore_used = 0;
+		raw_spin_unlock(&pc->lock);
+		break;
+	}
 }
 
 static int intel_pmu_hw_config(struct perf_event *event)
@@ -1425,84 +1206,12 @@ static int intel_pmu_hw_config(struct perf_event *event)
 	return 0;
 }
 
-struct perf_guest_switch_msr *perf_guest_get_msrs(int *nr)
-{
-	if (x86_pmu.guest_get_msrs)
-		return x86_pmu.guest_get_msrs(nr);
-	*nr = 0;
-	return NULL;
-}
-EXPORT_SYMBOL_GPL(perf_guest_get_msrs);
-
-static struct perf_guest_switch_msr *intel_guest_get_msrs(int *nr)
-{
-	struct cpu_hw_events *cpuc = &__get_cpu_var(cpu_hw_events);
-	struct perf_guest_switch_msr *arr = cpuc->guest_switch_msrs;
-
-	arr[0].msr = MSR_CORE_PERF_GLOBAL_CTRL;
-	arr[0].host = x86_pmu.intel_ctrl & ~cpuc->intel_ctrl_guest_mask;
-	arr[0].guest = x86_pmu.intel_ctrl & ~cpuc->intel_ctrl_host_mask;
-
-	*nr = 1;
-	return arr;
-}
-
-static struct perf_guest_switch_msr *core_guest_get_msrs(int *nr)
-{
-	struct cpu_hw_events *cpuc = &__get_cpu_var(cpu_hw_events);
-	struct perf_guest_switch_msr *arr = cpuc->guest_switch_msrs;
-	int idx;
-
-	for (idx = 0; idx < x86_pmu.num_counters; idx++)  {
-		struct perf_event *event = cpuc->events[idx];
-
-		arr[idx].msr = x86_pmu_config_addr(idx);
-		arr[idx].host = arr[idx].guest = 0;
-
-		if (!test_bit(idx, cpuc->active_mask))
-			continue;
-
-		arr[idx].host = arr[idx].guest =
-			event->hw.config | ARCH_PERFMON_EVENTSEL_ENABLE;
-
-		if (event->attr.exclude_host)
-			arr[idx].host &= ~ARCH_PERFMON_EVENTSEL_ENABLE;
-		else if (event->attr.exclude_guest)
-			arr[idx].guest &= ~ARCH_PERFMON_EVENTSEL_ENABLE;
-	}
-
-	*nr = x86_pmu.num_counters;
-	return arr;
-}
-
-static void core_pmu_enable_event(struct perf_event *event)
-{
-	if (!event->attr.exclude_host)
-		x86_pmu_enable_event(event);
-}
-
-static void core_pmu_enable_all(int added)
-{
-	struct cpu_hw_events *cpuc = &__get_cpu_var(cpu_hw_events);
-	int idx;
-
-	for (idx = 0; idx < x86_pmu.num_counters; idx++) {
-		struct hw_perf_event *hwc = &cpuc->events[idx]->hw;
-
-		if (!test_bit(idx, cpuc->active_mask) ||
-				cpuc->events[idx]->attr.exclude_host)
-			continue;
-
-		__x86_pmu_enable_event(hwc, ARCH_PERFMON_EVENTSEL_ENABLE);
-	}
-}
-
 static __initconst const struct x86_pmu core_pmu = {
 	.name			= "core",
 	.handle_irq		= x86_pmu_handle_irq,
 	.disable_all		= x86_pmu_disable_all,
-	.enable_all		= core_pmu_enable_all,
-	.enable			= core_pmu_enable_event,
+	.enable_all		= x86_pmu_enable_all,
+	.enable			= x86_pmu_enable_event,
 	.disable		= x86_pmu_disable_event,
 	.hw_config		= x86_pmu_hw_config,
 	.schedule_events	= x86_schedule_events,
@@ -1520,43 +1229,22 @@ static __initconst const struct x86_pmu core_pmu = {
 	.get_event_constraints	= intel_get_event_constraints,
 	.put_event_constraints	= intel_put_event_constraints,
 	.event_constraints	= intel_core_event_constraints,
-	.guest_get_msrs		= core_guest_get_msrs,
 };
-
-<<<<<<< HEAD
-struct intel_shared_regs *allocate_shared_regs(int cpu)
-=======
-static struct intel_shared_regs *allocate_shared_regs(int cpu)
->>>>>>> efc9f05... perf_events: Update Intel extra regs shared constraints management
-{
-	struct intel_shared_regs *regs;
-	int i;
-
-	regs = kzalloc_node(sizeof(struct intel_shared_regs),
-			    GFP_KERNEL, cpu_to_node(cpu));
-	if (regs) {
-		/*
-		 * initialize the locks to keep lockdep happy
-		 */
-		for (i = 0; i < EXTRA_REG_MAX; i++)
-			raw_spin_lock_init(&regs->regs[i].lock);
-
-		regs->core_id = -1;
-	}
-	return regs;
-}
 
 static int intel_pmu_cpu_prepare(int cpu)
 {
 	struct cpu_hw_events *cpuc = &per_cpu(cpu_hw_events, cpu);
 
-	if (!x86_pmu.extra_regs)
+	if (!cpu_has_ht_siblings())
 		return NOTIFY_OK;
 
-	cpuc->shared_regs = allocate_shared_regs(cpu);
-	if (!cpuc->shared_regs)
+	cpuc->per_core = kzalloc_node(sizeof(struct intel_percore),
+				      GFP_KERNEL, cpu_to_node(cpu));
+	if (!cpuc->per_core)
 		return NOTIFY_BAD;
 
+	raw_spin_lock_init(&cpuc->per_core->lock);
+	cpuc->per_core->core_id = -1;
 	return NOTIFY_OK;
 }
 
@@ -1572,50 +1260,32 @@ static void intel_pmu_cpu_starting(int cpu)
 	 */
 	intel_pmu_lbr_reset();
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-	if (!cpuc->shared_regs || (x86_pmu.er_flags & ERF_NO_HT_SHARING))
-=======
-	if (!cpuc->shared_regs)
->>>>>>> efc9f05... perf_events: Update Intel extra regs shared constraints management
-=======
-	if (!cpuc->shared_regs || x86_pmu.regs_no_ht_sharing)
->>>>>>> ee89cbc... perf_events: Add Intel Sandy Bridge offcore_response low-level support
-=======
-	if (!cpuc->shared_regs || (x86_pmu.er_flags & ERF_NO_HT_SHARING))
->>>>>>> b79e894... perf, intel: Try alternative OFFCORE encodings
+	if (!cpu_has_ht_siblings())
 		return;
 
 	for_each_cpu(i, topology_thread_cpumask(cpu)) {
-		struct intel_shared_regs *pc;
+		struct intel_percore *pc = per_cpu(cpu_hw_events, i).per_core;
 
-		pc = per_cpu(cpu_hw_events, i).shared_regs;
 		if (pc && pc->core_id == core_id) {
-<<<<<<< HEAD
-			cpuc->kfree_on_online = cpuc->shared_regs;
-=======
-			kfree(cpuc->shared_regs);
->>>>>>> efc9f05... perf_events: Update Intel extra regs shared constraints management
-			cpuc->shared_regs = pc;
+			kfree(cpuc->per_core);
+			cpuc->per_core = pc;
 			break;
 		}
 	}
 
-	cpuc->shared_regs->core_id = core_id;
-	cpuc->shared_regs->refcnt++;
+	cpuc->per_core->core_id = core_id;
+	cpuc->per_core->refcnt++;
 }
 
 static void intel_pmu_cpu_dying(int cpu)
 {
 	struct cpu_hw_events *cpuc = &per_cpu(cpu_hw_events, cpu);
-	struct intel_shared_regs *pc;
+	struct intel_percore *pc = cpuc->per_core;
 
-	pc = cpuc->shared_regs;
 	if (pc) {
 		if (pc->core_id == -1 || --pc->refcnt == 0)
 			kfree(pc);
-		cpuc->shared_regs = NULL;
+		cpuc->per_core = NULL;
 	}
 
 	fini_debug_store_on_cpu(cpu);
@@ -1647,7 +1317,6 @@ static __initconst const struct x86_pmu intel_pmu = {
 	.cpu_prepare		= intel_pmu_cpu_prepare,
 	.cpu_starting		= intel_pmu_cpu_starting,
 	.cpu_dying		= intel_pmu_cpu_dying,
-	.guest_get_msrs		= intel_guest_get_msrs,
 };
 
 static void intel_clovertown_quirks(void)
@@ -1676,7 +1345,7 @@ static void intel_clovertown_quirks(void)
 	x86_pmu.pebs_constraints = NULL;
 }
 
-__init int intel_pmu_init(void)
+static __init int intel_pmu_init(void)
 {
 	union cpuid10_edx edx;
 	union cpuid10_eax eax;
@@ -1767,6 +1436,7 @@ __init int intel_pmu_init(void)
 
 		x86_pmu.event_constraints = intel_nehalem_event_constraints;
 		x86_pmu.pebs_constraints = intel_nehalem_pebs_event_constraints;
+		x86_pmu.percore_constraints = intel_nehalem_percore_constraints;
 		x86_pmu.enable_all = intel_pmu_nhm_enable_all;
 		x86_pmu.extra_regs = intel_nehalem_extra_regs;
 
@@ -1811,10 +1481,10 @@ __init int intel_pmu_init(void)
 		intel_pmu_lbr_init_nhm();
 
 		x86_pmu.event_constraints = intel_westmere_event_constraints;
+		x86_pmu.percore_constraints = intel_westmere_percore_constraints;
 		x86_pmu.enable_all = intel_pmu_nhm_enable_all;
 		x86_pmu.pebs_constraints = intel_westmere_pebs_event_constraints;
 		x86_pmu.extra_regs = intel_westmere_extra_regs;
-		x86_pmu.er_flags |= ERF_HAS_RSP_1;
 
 		/* UOPS_ISSUED.STALLED_CYCLES */
 		intel_perfmon_event_map[PERF_COUNT_HW_STALLED_CYCLES_FRONTEND] = 0x180010e;
@@ -1825,30 +1495,13 @@ __init int intel_pmu_init(void)
 		break;
 
 	case 42: /* SandyBridge */
-	case 45: /* SandyBridge, "Romely-EP" */
 		memcpy(hw_cache_event_ids, snb_hw_cache_event_ids,
 		       sizeof(hw_cache_event_ids));
 
 		intel_pmu_lbr_init_nhm();
 
 		x86_pmu.event_constraints = intel_snb_event_constraints;
-<<<<<<< HEAD
-		x86_pmu.pebs_constraints = intel_snb_pebs_event_constraints;
-		x86_pmu.extra_regs = intel_snb_extra_regs;
-		/* all extra regs are per-cpu when HT is on */
-		x86_pmu.er_flags |= ERF_HAS_RSP_1;
-		x86_pmu.er_flags |= ERF_NO_HT_SHARING;
-=======
 		x86_pmu.pebs_constraints = intel_snb_pebs_events;
-		x86_pmu.extra_regs = intel_snb_extra_regs;
-		/* all extra regs are per-cpu when HT is on */
-<<<<<<< HEAD
-		x86_pmu.regs_no_ht_sharing = true;
->>>>>>> ee89cbc... perf_events: Add Intel Sandy Bridge offcore_response low-level support
-=======
-		x86_pmu.er_flags |= ERF_HAS_RSP_1;
-		x86_pmu.er_flags |= ERF_NO_HT_SHARING;
->>>>>>> b79e894... perf, intel: Try alternative OFFCORE encodings
 
 		/* UOPS_ISSUED.ANY,c=1,i=1 to count stall cycles */
 		intel_perfmon_event_map[PERF_COUNT_HW_STALLED_CYCLES_FRONTEND] = 0x180010e;
@@ -1859,24 +1512,14 @@ __init int intel_pmu_init(void)
 		break;
 
 	default:
-		switch (x86_pmu.version) {
-		case 1:
-			x86_pmu.event_constraints = intel_v1_event_constraints;
-			pr_cont("generic architected perfmon v1, ");
-			break;
-		default:
-			/*
-			 * default constraints for v2 and up
-			 */
-			x86_pmu.event_constraints = intel_gen_event_constraints;
-			pr_cont("generic architected perfmon, ");
-			break;
-		}
+		/*
+		 * default constraints for v2 and up
+		 */
+		x86_pmu.event_constraints = intel_gen_event_constraints;
+		pr_cont("generic architected perfmon, ");
 	}
 	return 0;
 }
-<<<<<<< HEAD
-=======
 
 #else /* CONFIG_CPU_SUP_INTEL */
 
@@ -1885,9 +1528,4 @@ static int intel_pmu_init(void)
 	return 0;
 }
 
-static struct intel_shared_regs *allocate_shared_regs(int cpu)
-{
-	return NULL;
-}
 #endif /* CONFIG_CPU_SUP_INTEL */
->>>>>>> cd8a38d... perf_events: Fix validation of events using an extra reg

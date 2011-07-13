@@ -12,7 +12,6 @@
 #include <asm/pgtable.h>
 
 #include <xen/interface/xen.h>
-#include <xen/grant_table.h>
 #include <xen/features.h>
 
 /* Xen machine address */
@@ -40,7 +39,7 @@ typedef struct xpaddr {
     ((unsigned long)((u64)CONFIG_XEN_MAX_DOMAIN_MEMORY * 1024 * 1024 * 1024 / PAGE_SIZE))
 
 extern unsigned long *machine_to_phys_mapping;
-extern unsigned long  machine_to_phys_nr;
+extern unsigned int   machine_to_phys_order;
 
 extern unsigned long get_phys_to_machine(unsigned long pfn);
 extern bool set_phys_to_machine(unsigned long pfn, unsigned long mfn);
@@ -49,11 +48,14 @@ extern unsigned long set_phys_range_identity(unsigned long pfn_s,
 					     unsigned long pfn_e);
 
 extern int m2p_add_override(unsigned long mfn, struct page *page,
-			    struct gnttab_map_grant_ref *kmap_op);
+			    bool clear_pte);
 extern int m2p_remove_override(struct page *page, bool clear_pte);
 extern struct page *m2p_find_override(unsigned long mfn);
 extern unsigned long m2p_find_override_pfn(unsigned long mfn, unsigned long pfn);
 
+#ifdef CONFIG_XEN_DEBUG_FS
+extern int p2m_dump_show(struct seq_file *m, void *v);
+#endif
 static inline unsigned long pfn_to_mfn(unsigned long pfn)
 {
 	unsigned long mfn;
@@ -85,7 +87,7 @@ static inline unsigned long mfn_to_pfn(unsigned long mfn)
 	if (xen_feature(XENFEAT_auto_translated_physmap))
 		return mfn;
 
-	if (unlikely(mfn >= machine_to_phys_nr)) {
+	if (unlikely((mfn >> machine_to_phys_order) != 0)) {
 		pfn = ~0;
 		goto try_override;
 	}

@@ -14,14 +14,13 @@
 #include <asm/vgtod.h>
 #include <asm/proto.h>
 #include <asm/vdso.h>
-#include <asm/page.h>
 
 unsigned int __read_mostly vdso_enabled = 1;
 
 extern char vdso_start[], vdso_end[];
 extern unsigned short vdso_sync_cpuid;
 
-extern struct page *vdso_pages[];
+static struct page **vdso_pages;
 static unsigned vdso_size;
 
 static void __init patch_vdso(void *vdso, size_t len)
@@ -55,7 +54,7 @@ found:
 	apply_alternatives(alt_data, alt_data + alt_sec->sh_size);
 }
 
-static int __init init_vdso(void)
+static int __init init_vdso_vars(void)
 {
 	int npages = (vdso_end - vdso_start + PAGE_SIZE - 1) / PAGE_SIZE;
 	int i;
@@ -63,12 +62,26 @@ static int __init init_vdso(void)
 	patch_vdso(vdso_start, vdso_end - vdso_start);
 
 	vdso_size = npages << PAGE_SHIFT;
-	for (i = 0; i < npages; i++)
-		vdso_pages[i] = virt_to_page(vdso_start + i*PAGE_SIZE);
+	vdso_pages = kmalloc(sizeof(struct page *) * npages, GFP_KERNEL);
+	if (!vdso_pages)
+		goto oom;
+	for (i = 0; i < npages; i++) {
+		struct page *p;
+		p = alloc_page(GFP_KERNEL);
+		if (!p)
+			goto oom;
+		vdso_pages[i] = p;
+		copy_page(page_address(p), vdso_start + i*PAGE_SIZE);
+	}
 
 	return 0;
+
+ oom:
+	printk("Cannot allocate vdso\n");
+	vdso_enabled = 0;
+	return -ENOMEM;
 }
-subsys_initcall(init_vdso);
+subsys_initcall(init_vdso_vars);
 
 struct linux_binprm;
 
@@ -89,15 +102,6 @@ static unsigned long vdso_addr(unsigned long start, unsigned len)
 	addr = start + (offset << PAGE_SHIFT);
 	if (addr >= end)
 		addr = end;
-
-	/*
-	 * page-align it here so that get_unmapped_area doesn't
-	 * align it wrongfully again to the next page. addr can come in 4K
-	 * unaligned here as a result of stack start randomization.
-	 */
-	addr = PAGE_ALIGN(addr);
-	addr = align_addr(addr, NULL, ALIGN_VDSO);
-
 	return addr;
 }
 

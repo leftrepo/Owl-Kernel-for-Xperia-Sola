@@ -27,7 +27,6 @@
 #include <linux/syscore_ops.h>
 #include <linux/delay.h>
 #include <linux/timex.h>
-#include <linux/i8253.h>
 #include <linux/dmar.h>
 #include <linux/init.h>
 #include <linux/cpu.h>
@@ -38,8 +37,9 @@
 #include <asm/perf_event.h>
 #include <asm/x86_init.h>
 #include <asm/pgalloc.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 #include <asm/mpspec.h>
+#include <asm/i8253.h>
 #include <asm/i8259.h>
 #include <asm/proto.h>
 #include <asm/apic.h>
@@ -48,7 +48,6 @@
 #include <asm/hpet.h>
 #include <asm/idle.h>
 #include <asm/mtrr.h>
-#include <asm/time.h>
 #include <asm/smp.h>
 #include <asm/mce.h>
 #include <asm/tsc.h>
@@ -391,8 +390,7 @@ static unsigned int reserve_eilvt_offset(int offset, unsigned int new)
 
 /*
  * If mask=1, the LVT entry does not generate interrupts while mask=0
- * enables the vector. See also the BKDGs. Must be called with
- * preemption disabled.
+ * enables the vector. See also the BKDGs.
  */
 
 int setup_APIC_eilvt(u8 offset, u8 vector, u8 msg_type, u8 mask)
@@ -1430,28 +1428,34 @@ void enable_x2apic(void)
 	rdmsr(MSR_IA32_APICBASE, msr, msr2);
 	if (!(msr & X2APIC_ENABLE)) {
 		printk_once(KERN_INFO "Enabling x2apic\n");
-		wrmsr(MSR_IA32_APICBASE, msr | X2APIC_ENABLE, msr2);
+		wrmsr(MSR_IA32_APICBASE, msr | X2APIC_ENABLE, 0);
 	}
 }
 #endif /* CONFIG_X86_X2APIC */
 
 int __init enable_IR(void)
 {
-#ifdef CONFIG_IRQ_REMAP
+#ifdef CONFIG_INTR_REMAP
 	if (!intr_remapping_supported()) {
 		pr_debug("intr-remapping not supported\n");
-		return -1;
+		return 0;
 	}
 
 	if (!x2apic_preenabled && skip_ioapic_setup) {
 		pr_info("Skipped enabling intr-remap because of skipping "
 			"io-apic setup\n");
-		return -1;
+		return 0;
 	}
 
-	return enable_intr_remapping();
+	if (enable_intr_remapping(x2apic_supported()))
+		return 0;
+
+	pr_info("Enabled Interrupt-remapping\n");
+
+	return 1;
+
 #endif
-	return -1;
+	return 0;
 }
 
 void __init enable_IR_x2apic(void)
@@ -1475,11 +1479,11 @@ void __init enable_IR_x2apic(void)
 	mask_ioapic_entries();
 
 	if (dmar_table_init_ret)
-		ret = -1;
+		ret = 0;
 	else
 		ret = enable_IR();
 
-	if (ret < 0) {
+	if (!ret) {
 		/* IR is required if there is APIC ID > 255 even when running
 		 * under KVM
 		 */
@@ -1493,9 +1497,6 @@ void __init enable_IR_x2apic(void)
 		x2apic_force_phys();
 	}
 
-	if (ret == IRQ_REMAP_XAPIC_MODE)
-		goto nox2apic;
-
 	x2apic_enabled = 1;
 
 	if (x2apic_supported() && !x2apic_mode) {
@@ -1505,21 +1506,19 @@ void __init enable_IR_x2apic(void)
 	}
 
 nox2apic:
-	if (ret < 0) /* IR enabling failed */
+	if (!ret) /* IR enabling failed */
 		restore_ioapic_entries();
 	legacy_pic->restore_mask();
 	local_irq_restore(flags);
 
 out:
-	if (x2apic_enabled || !x2apic_supported())
+	if (x2apic_enabled)
 		return;
 
 	if (x2apic_preenabled)
 		panic("x2apic: enabled by BIOS but kernel init failed.");
-	else if (ret == IRQ_REMAP_XAPIC_MODE)
-		pr_info("x2apic not enabled, IRQ remapping is in xapic mode\n");
-	else if (ret < 0)
-		pr_info("x2apic not enabled, IRQ remapping init failed\n");
+	else if (cpu_has_x2apic)
+		pr_info("Not enabling x2apic, Intr-remapping init failed.\n");
 }
 
 #ifdef CONFIG_X86_64
@@ -1943,28 +1942,10 @@ void disconnect_bsp_APIC(int virt_wire_setup)
 
 void __cpuinit generic_processor_info(int apicid, int version)
 {
-	int cpu, max = nr_cpu_ids;
-	bool boot_cpu_detected = physid_isset(boot_cpu_physical_apicid,
-				phys_cpu_present_map);
-
-	/*
-	 * If boot cpu has not been detected yet, then only allow upto
-	 * nr_cpu_ids - 1 processors and keep one slot free for boot cpu
-	 */
-	if (!boot_cpu_detected && num_processors >= nr_cpu_ids - 1 &&
-	    apicid != boot_cpu_physical_apicid) {
-		int thiscpu = max + disabled_cpus - 1;
-
-		pr_warning(
-			"ACPI: NR_CPUS/possible_cpus limit of %i almost"
-			" reached. Keeping one slot for boot cpu."
-			"  Processor %d/0x%x ignored.\n", max, thiscpu, apicid);
-
-		disabled_cpus++;
-		return;
-	}
+	int cpu;
 
 	if (num_processors >= nr_cpu_ids) {
+		int max = nr_cpu_ids;
 		int thiscpu = max + disabled_cpus;
 
 		pr_warning(

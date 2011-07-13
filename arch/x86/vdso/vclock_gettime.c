@@ -6,6 +6,7 @@
  *
  * The code should have no internal unresolved relocations.
  * Check with readelf after changing.
+ * Also alternative() doesn't work.
  */
 
 /* Disable profiling for userspace code: */

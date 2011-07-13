@@ -207,6 +207,7 @@ static int __cpuinit uv_wakeup_secondary(int phys_apicid, unsigned long start_ri
 	    ((start_rip << UVH_IPI_INT_VECTOR_SHFT) >> 12) |
 	    APIC_DM_INIT;
 	uv_write_global_mmr64(pnode, UVH_IPI_INT, val);
+	mdelay(10);
 
 	val = (1UL << UVH_IPI_INT_SEND_SHFT) |
 	    (phys_apicid << UVH_IPI_INT_APIC_ID_SHFT) |
@@ -631,14 +632,14 @@ late_initcall(uv_init_heartbeat);
 
 /* Direct Legacy VGA I/O traffic to designated IOH */
 int uv_set_vga_state(struct pci_dev *pdev, bool decode,
-		      unsigned int command_bits, u32 flags)
+		      unsigned int command_bits, bool change_bridge)
 {
 	int domain, bus, rc;
 
-	PR_DEVEL("devfn %x decode %d cmd %x flags %d\n",
-			pdev->devfn, decode, command_bits, flags);
+	PR_DEVEL("devfn %x decode %d cmd %x chg_brdg %d\n",
+			pdev->devfn, decode, command_bits, change_bridge);
 
-	if (!(flags & PCI_VGA_STATE_CHANGE_BRIDGE))
+	if (!change_bridge)
 		return 0;
 
 	if ((command_bits & PCI_COMMAND_IO) == 0)
@@ -672,10 +673,17 @@ void __cpuinit uv_cpu_init(void)
 /*
  * When NMI is received, print a stack trace.
  */
-int uv_handle_nmi(unsigned int reason, struct pt_regs *regs)
+int uv_handle_nmi(struct notifier_block *self, unsigned long reason, void *data)
 {
 	unsigned long real_uv_nmi;
 	int bid;
+
+	if (reason != DIE_NMIUNKNOWN)
+		return NOTIFY_OK;
+
+	if (in_crash_kexec)
+		/* do nothing if entering the crash kernel */
+		return NOTIFY_OK;
 
 	/*
 	 * Each blade has an MMR that indicates when an NMI has been sent
@@ -697,7 +705,7 @@ int uv_handle_nmi(unsigned int reason, struct pt_regs *regs)
 	}
 
 	if (likely(__get_cpu_var(cpu_last_nmi_count) == uv_blade_info[bid].nmi_count))
-		return NMI_DONE;
+		return NOTIFY_DONE;
 
 	__get_cpu_var(cpu_last_nmi_count) = uv_blade_info[bid].nmi_count;
 
@@ -710,12 +718,17 @@ int uv_handle_nmi(unsigned int reason, struct pt_regs *regs)
 	dump_stack();
 	spin_unlock(&uv_nmi_lock);
 
-	return NMI_HANDLED;
+	return NOTIFY_STOP;
 }
+
+static struct notifier_block uv_dump_stack_nmi_nb = {
+	.notifier_call	= uv_handle_nmi,
+	.priority = NMI_LOCAL_LOW_PRIOR - 1,
+};
 
 void uv_register_nmi_notifier(void)
 {
-	if (register_nmi_handler(NMI_UNKNOWN, uv_handle_nmi, 0, "uv"))
+	if (register_die_notifier(&uv_dump_stack_nmi_nb))
 		printk(KERN_WARNING "UV NMI handler failed to register\n");
 }
 
@@ -820,10 +833,6 @@ void __init uv_system_init(void)
 		uv_cpu_hub_info(cpu)->apic_pnode_shift = uvh_apicid.s.pnode_shift;
 		uv_cpu_hub_info(cpu)->hub_revision = uv_hub_info->hub_revision;
 
-		uv_cpu_hub_info(cpu)->m_shift = 64 - m_val;
-		uv_cpu_hub_info(cpu)->n_lshift = is_uv2_1_hub() ?
-				(m_val == 40 ? 40 : 39) : m_val;
-
 		pnode = uv_apicid_to_pnode(apicid);
 		blade = boot_pnode_to_blade(pnode);
 		lcpu = uv_blade_info[blade].nr_possible_cpus;
@@ -854,7 +863,8 @@ void __init uv_system_init(void)
 		if (uv_node_to_blade[nid] >= 0)
 			continue;
 		paddr = node_start_pfn(nid) << PAGE_SHIFT;
-		pnode = uv_gpa_to_pnode(uv_soc_phys_ram_to_gpa(paddr));
+		paddr = uv_soc_phys_ram_to_gpa(paddr);
+		pnode = (paddr >> m_val) & pnode_mask;
 		blade = boot_pnode_to_blade(pnode);
 		uv_node_to_blade[nid] = blade;
 	}

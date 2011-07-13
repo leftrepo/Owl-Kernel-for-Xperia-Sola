@@ -37,7 +37,6 @@
 #include <linux/uaccess.h>
 #include <linux/io.h>
 #include <linux/ftrace.h>
-#include <linux/cpuidle.h>
 
 #include <asm/pgtable.h>
 #include <asm/system.h>
@@ -51,7 +50,6 @@
 #include <asm/idle.h>
 #include <asm/syscalls.h>
 #include <asm/debugreg.h>
-#include <asm/nmi.h>
 
 asmlinkage extern void ret_from_fork(void);
 
@@ -122,7 +120,7 @@ void cpu_idle(void)
 
 	/* endless idle loop with no priority at all */
 	while (1) {
-		tick_nohz_idle_enter_norcu();
+		tick_nohz_stop_sched_tick(1);
 		while (!need_resched()) {
 
 			rmb();
@@ -134,13 +132,11 @@ void cpu_idle(void)
 			 * from here on, until they go to idle.
 			 * Otherwise, idle callbacks can misfire.
 			 */
-			local_touch_nmi();
 			local_irq_disable();
 			enter_idle();
 			/* Don't trace irqs off for idle */
 			stop_critical_timings();
-			if (cpuidle_idle_call())
-				pm_idle();
+			pm_idle();
 			start_critical_timings();
 
 			/* In many cases the interrupt that ended idle
@@ -149,7 +145,7 @@ void cpu_idle(void)
 			__exit_idle();
 		}
 
-		tick_nohz_idle_exit_norcu();
+		tick_nohz_restart_sched_tick();
 		preempt_enable_no_resched();
 		schedule();
 		preempt_disable();
@@ -342,6 +338,7 @@ start_thread_common(struct pt_regs *regs, unsigned long new_ip,
 	regs->cs		= _cs;
 	regs->ss		= _ss;
 	regs->flags		= X86_EFLAGS_IF;
+	set_fs(USER_DS);
 	/*
 	 * Free the old FP and other extended state
 	 */

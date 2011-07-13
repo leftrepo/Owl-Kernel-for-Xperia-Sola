@@ -66,21 +66,22 @@ struct microcode_amd {
 	unsigned int			mpb[0];
 };
 
-#define SECTION_HDR_SIZE	8
-#define CONTAINER_HDR_SZ	12
+#define UCODE_CONTAINER_SECTION_HDR	8
+#define UCODE_CONTAINER_HEADER_SIZE	12
 
 static struct equiv_cpu_entry *equiv_cpu_table;
 
 static int collect_cpu_info_amd(int cpu, struct cpu_signature *csig)
 {
 	struct cpuinfo_x86 *c = &cpu_data(cpu);
+	u32 dummy;
 
 	if (c->x86_vendor != X86_VENDOR_AMD || c->x86 < 0x10) {
 		pr_warning("CPU%d: family %d not supported\n", cpu, c->x86);
 		return -1;
 	}
 
-	csig->rev = c->microcode;
+	rdmsr(MSR_AMD64_PATCH_LEVEL, csig->rev, dummy);
 	pr_info("CPU%d: patch_level=0x%08x\n", cpu, csig->rev);
 
 	return 0;
@@ -129,7 +130,6 @@ static int apply_microcode_amd(int cpu)
 	int cpu_num = raw_smp_processor_id();
 	struct ucode_cpu_info *uci = ucode_cpu_info + cpu_num;
 	struct microcode_amd *mc_amd = uci->mc;
-	struct cpuinfo_x86 *c = &cpu_data(cpu);
 
 	/* We should bind the task to the CPU */
 	BUG_ON(cpu_num != cpu);
@@ -150,7 +150,6 @@ static int apply_microcode_amd(int cpu)
 
 	pr_info("CPU%d: new patch_level=0x%08x\n", cpu, rev);
 	uci->cpu_sig.rev = rev;
-	c->microcode = rev;
 
 	return 0;
 }
@@ -158,7 +157,7 @@ static int apply_microcode_amd(int cpu)
 static unsigned int verify_ucode_size(int cpu, const u8 *buf, unsigned int size)
 {
 	struct cpuinfo_x86 *c = &cpu_data(cpu);
-	u32 max_size, actual_size;
+	unsigned int max_size, actual_size;
 
 #define F1XH_MPB_MAX_SIZE 2048
 #define F14H_MPB_MAX_SIZE 1824
@@ -176,9 +175,9 @@ static unsigned int verify_ucode_size(int cpu, const u8 *buf, unsigned int size)
 		break;
 	}
 
-	actual_size = *(u32 *)(buf + 4);
+	actual_size = buf[4] + (buf[5] << 8);
 
-	if (actual_size + SECTION_HDR_SIZE > size || actual_size > max_size) {
+	if (actual_size > size || actual_size > max_size) {
 		pr_err("section size mismatch\n");
 		return 0;
 	}
@@ -192,7 +191,7 @@ get_next_ucode(int cpu, const u8 *buf, unsigned int size, unsigned int *mc_size)
 	struct microcode_header_amd *mc = NULL;
 	unsigned int actual_size = 0;
 
-	if (*(u32 *)buf != UCODE_UCODE_TYPE) {
+	if (buf[0] != UCODE_UCODE_TYPE) {
 		pr_err("invalid type field in container file section header\n");
 		goto out;
 	}
@@ -205,8 +204,8 @@ get_next_ucode(int cpu, const u8 *buf, unsigned int size, unsigned int *mc_size)
 	if (!mc)
 		goto out;
 
-	get_ucode_data(mc, buf + SECTION_HDR_SIZE, actual_size);
-	*mc_size = actual_size + SECTION_HDR_SIZE;
+	get_ucode_data(mc, buf + UCODE_CONTAINER_SECTION_HDR, actual_size);
+	*mc_size = actual_size + UCODE_CONTAINER_SECTION_HDR;
 
 out:
 	return mc;
@@ -230,10 +229,9 @@ static int install_equiv_cpu_table(const u8 *buf)
 		return -ENOMEM;
 	}
 
-	get_ucode_data(equiv_cpu_table, buf + CONTAINER_HDR_SZ, size);
+	get_ucode_data(equiv_cpu_table, buf + UCODE_CONTAINER_HEADER_SIZE, size);
 
-	/* add header length */
-	return size + CONTAINER_HDR_SZ;
+	return size + UCODE_CONTAINER_HEADER_SIZE; /* add header length */
 }
 
 static void free_equiv_cpu_table(void)
