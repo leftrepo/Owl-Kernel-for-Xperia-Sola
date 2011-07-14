@@ -128,10 +128,12 @@ config SPARSEMEM_VMEMMAP
 	 pfn_to_page and page_to_pfn operations.  This is the most
 	 efficient option when sufficient kernel resources are available.
 
+config NO_BOOTMEM
+
 config HAVE_MEMBLOCK
 	boolean
 
-config NO_BOOTMEM
+config HAVE_MEMBLOCK_NODE_MAP
 	boolean
 
 # eventually, we can have this option just 'select SPARSEMEM'
