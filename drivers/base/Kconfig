@@ -175,4 +175,6 @@ config SYS_HYPERVISOR
 config SYS_SOC
 	bool
 
+source "drivers/base/regmap/Kconfig"
+
 endmenu
