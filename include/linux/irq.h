@@ -148,7 +148,7 @@ struct irq_domain;
  */
 struct irq_data {
 	unsigned int		irq;
-	irq_hw_number_t		hwirq;
+	unsigned long		hwirq;
 	unsigned int		node;
 	unsigned int		state_use_accessors;
 	struct irq_chip		*chip;
