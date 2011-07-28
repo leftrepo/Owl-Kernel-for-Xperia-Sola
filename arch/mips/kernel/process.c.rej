@@ -1,0 +1,13 @@
+--- arch/mips/kernel/process.c
++++ arch/mips/kernel/process.c
+@@ -78,9 +78,7 @@
+ 			play_dead();
+ #endif
+ 		tick_nohz_restart_sched_tick();
+-		preempt_enable_no_resched();
+-		schedule();
+-		preempt_disable();
++		schedule_preempt_disabled();
+ 	}
+ }
+ 

@@ -1,0 +1,12 @@
+--- kernel/rcutree_trace.c
++++ kernel/rcutree_trace.c
+@@ -167,9 +163,7 @@
+ static int show_rcudata_csv(struct seq_file *m, void *unused)
+ {
+ 	seq_puts(m, "\"CPU\",\"Online?\",\"c\",\"g\",\"pq\",\"pgp\",\"pq\",");
+-#ifdef CONFIG_NO_HZ
+ 	seq_puts(m, "\"dt\",\"dt nesting\",\"dt NMI nesting\",\"df\",");
+-#endif /* #ifdef CONFIG_NO_HZ */
+ 	seq_puts(m, "\"of\",\"ri\",\"ql\",\"qs\"");
+ #ifdef CONFIG_RCU_BOOST
+ 	seq_puts(m, "\"kt\",\"ktl\"");

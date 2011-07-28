@@ -1,0 +1,16 @@
+--- arch/arm/common/gic.c
++++ arch/arm/common/gic.c
+@@ -188,11 +188,11 @@
+ 	mask = 0xff << shift;
+ 	bit = 1 << (cpu + shift);
+ 
+-	spin_lock(&irq_controller_lock);
++	raw_spin_lock(&irq_controller_lock);
+ 	d->node = cpu;
+ 	val = readl_relaxed(reg) & ~mask;
+ 	writel_relaxed(val | bit, reg);
+-	spin_unlock(&irq_controller_lock);
++	raw_spin_unlock(&irq_controller_lock);
+ 
+ 	return 0;
+ }

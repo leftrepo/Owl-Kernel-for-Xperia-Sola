@@ -1,0 +1,13 @@
+--- arch/avr32/kernel/process.c
++++ arch/avr32/kernel/process.c
+@@ -38,9 +38,7 @@
+ 		while (!need_resched())
+ 			cpu_idle_sleep();
+ 		tick_nohz_restart_sched_tick();
+-		preempt_enable_no_resched();
+-		schedule();
+-		preempt_disable();
++		schedule_preempt_disabled();
+ 	}
+ }
+ 

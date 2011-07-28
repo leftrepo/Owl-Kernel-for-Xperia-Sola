@@ -1,0 +1,13 @@
+--- arch/powerpc/platforms/iseries/setup.c
++++ arch/powerpc/platforms/iseries/setup.c
+@@ -608,9 +606,7 @@
+ 
+ 		ppc64_runlatch_on();
+ 		tick_nohz_restart_sched_tick();
+-		preempt_enable_no_resched();
+-		schedule();
+-		preempt_disable();
++		schedule_preempt_disabled();
+ 	}
+ }
+ 

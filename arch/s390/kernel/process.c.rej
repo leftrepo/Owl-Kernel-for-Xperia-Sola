@@ -1,0 +1,13 @@
+--- arch/s390/kernel/process.c
++++ arch/s390/kernel/process.c
+@@ -93,9 +93,7 @@
+ 		while (!need_resched())
+ 			default_idle();
+ 		tick_nohz_restart_sched_tick();
+-		preempt_enable_no_resched();
+-		schedule();
+-		preempt_disable();
++		schedule_preempt_disabled();
+ 	}
+ }
+ 
