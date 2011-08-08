@@ -57,10 +57,8 @@ static DEFINE_MUTEX(dpm_list_mtx);
 static pm_message_t pm_transition;
 
 static void dpm_drv_timeout(unsigned long data);
-struct dpm_drv_wd_data {
-	struct device *dev;
-	struct task_struct *tsk;
-};
+static void __dpm_drv_timeout(unsigned long data);
+static void (*dpm_drv_timeout_fun)(unsigned long data) = __dpm_drv_timeout;
 
 static int async_error;
 
@@ -672,6 +670,15 @@ static bool is_async(struct device *dev)
  */
 static void dpm_drv_timeout(unsigned long data)
 {
+	dpm_drv_timeout_fun(data);
+}
+
+/**
+ * Default dpm_drv_timeout. Change using device_pm_set_timout_handler.
+ */
+static void __dpm_drv_timeout(unsigned long data)
+{
+
 	struct dpm_drv_wd_data *wd_data = (void *)data;
 	struct device *dev = wd_data->dev;
 	struct task_struct *tsk = wd_data->tsk;
