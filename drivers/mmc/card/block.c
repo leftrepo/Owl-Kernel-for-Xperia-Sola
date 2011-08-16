@@ -34,6 +34,7 @@
 #include <linux/delay.h>
 #include <linux/capability.h>
 #include <linux/compat.h>
+#include <linux/pm_runtime.h>
 
 #include <linux/mmc/ioctl.h>
 #include <linux/mmc/card.h>
@@ -113,17 +114,6 @@ struct mmc_blk_data {
 };
 
 static DEFINE_MUTEX(open_lock);
-
-enum mmc_blk_status {
-	MMC_BLK_SUCCESS = 0,
-	MMC_BLK_PARTIAL,
-	MMC_BLK_CMD_ERR,
-	MMC_BLK_RETRY,
-	MMC_BLK_ABORT,
-	MMC_BLK_DATA_ERR,
-	MMC_BLK_ECC_ERR,
-	MMC_BLK_NOMEDIUM,
-};
 
 module_param(perdev_minors, int, 0444);
 MODULE_PARM_DESC(perdev_minors, "Minors numbers to allocate per device");
@@ -281,7 +271,7 @@ static ssize_t power_ro_lock_store(struct device *dev,
 	md = mmc_blk_get(dev_to_disk(dev));
 	card = md->queue.card;
 
-	mmc_claim_host(card->host);
+	mmc_get_card(card);
 
 	ret = mmc_switch(card, EXT_CSD_CMD_SET_NORMAL, EXT_CSD_BOOT_WP,
 				card->ext_csd.boot_ro_lock |
@@ -292,7 +282,7 @@ static ssize_t power_ro_lock_store(struct device *dev,
 	else
 		card->ext_csd.boot_ro_lock |= EXT_CSD_BOOT_WP_B_PWR_WP_EN;
 
-	mmc_release_host(card->host);
+	mmc_put_card(card);
 
 	if (!ret) {
 		pr_info("%s: Locking boot partition ro until next power on\n",
@@ -514,7 +504,7 @@ static int mmc_blk_ioctl_cmd(struct block_device *bdev,
 
 	mrq.cmd = &cmd;
 
-	mmc_claim_host(card->host);
+	mmc_get_card(card);
 
 	if (idata->ic.is_acmd) {
 		err = mmc_app_cmd(card->host, card);
@@ -558,7 +548,7 @@ static int mmc_blk_ioctl_cmd(struct block_device *bdev,
 	}
 
 cmd_rel_host:
-	mmc_release_host(card->host);
+	mmc_put_card(card);
 
 cmd_done:
 	mmc_blk_put(md);
@@ -1350,8 +1340,11 @@ static int mmc_blk_issue_rw_rq(struct mmc_queue *mq, struct request *rqc)
 		} else
 			areq = NULL;
 		areq = mmc_start_req(card->host, areq, (int *) &status);
-		if (!areq)
+		if (!areq) {
+			if (status == MMC_BLK_NEW_REQUEST)
+				mq->flags |= MMC_QUEUE_NEW_REQUEST;
 			return 0;
+		}
 
 		mq_rq = container_of(areq, struct mmc_queue_req, mmc_active);
 		brq = &mq_rq->brq;
@@ -1428,6 +1421,10 @@ static int mmc_blk_issue_rw_rq(struct mmc_queue *mq, struct request *rqc)
 			break;
 		case MMC_BLK_NOMEDIUM:
 			goto cmd_abort;
+		default:
+			pr_err("%s: Unhandled return value (%d)",
+					req->rq_disk->disk_name, status);
+			goto cmd_abort;
 		}
 
 		if (ret) {
@@ -1464,6 +1461,8 @@ static int mmc_blk_issue_rq(struct mmc_queue *mq, struct request *req)
 	int ret;
 	struct mmc_blk_data *md = mq->data;
 	struct mmc_card *card = md->queue.card;
+	struct mmc_host *host = card->host;
+	unsigned long flags;
 
 	/*
 	 * We must make sure we have not claimed the host before
@@ -1475,7 +1474,7 @@ static int mmc_blk_issue_rq(struct mmc_queue *mq, struct request *req)
 
 	if (req && !mq->mqrq_prev->req)
 		/* claim host only for the first request */
-		mmc_claim_host(card->host);
+		mmc_get_card(card);
 
 	ret = mmc_blk_part_switch(card, md);
 	if (ret) {
@@ -1488,6 +1487,7 @@ static int mmc_blk_issue_rq(struct mmc_queue *mq, struct request *req)
 		goto out;
 	}
 
+	mq->flags &= ~MMC_QUEUE_NEW_REQUEST;
 	if (req && req->cmd_flags & REQ_DISCARD) {
 		/* complete ongoing async transfer before issuing discard */
 		if (card->host->areq)
@@ -1502,13 +1502,18 @@ static int mmc_blk_issue_rq(struct mmc_queue *mq, struct request *req)
 			mmc_blk_issue_rw_rq(mq, NULL);
 		ret = mmc_blk_issue_flush(mq, req);
 	} else {
+		if (!req && host->areq) {
+			spin_lock_irqsave(&host->context_info.lock, flags);
+			host->context_info.is_waiting_last_req = true;
+			spin_unlock_irqrestore(&host->context_info.lock, flags);
+		}
 		ret = mmc_blk_issue_rw_rq(mq, req);
 	}
 
 out:
-	if (!req)
+	if (!req && !(mq->flags & MMC_QUEUE_NEW_REQUEST))
 		/* release host only when there are no more requests */
-		mmc_release_host(card->host);
+		mmc_put_card(card);
 	return ret;
 }
 
@@ -1884,6 +1889,19 @@ static int mmc_blk_probe(struct mmc_card *card)
 		if (mmc_add_disk(part_md))
 			goto out;
 	}
+
+	pm_runtime_set_autosuspend_delay(&card->dev, 3000);
+	pm_runtime_use_autosuspend(&card->dev);
+
+	/*
+	 * Don't enable runtime PM for SD-combo cards here. Leave that
+	 * decision to be taken during the SDIO init sequence instead.
+	 */
+	if (card->type != MMC_TYPE_SD_COMBO) {
+		pm_runtime_set_active(&card->dev);
+		pm_runtime_enable(&card->dev);
+	}
+
 	return 0;
 
  out:
@@ -1897,9 +1915,13 @@ static void mmc_blk_remove(struct mmc_card *card)
 	struct mmc_blk_data *md = mmc_get_drvdata(card);
 
 	mmc_blk_remove_parts(card, md);
+	pm_runtime_get_sync(&card->dev);
 	mmc_claim_host(card->host);
 	mmc_blk_part_switch(card, md);
 	mmc_release_host(card->host);
+	if (card->type != MMC_TYPE_SD_COMBO)
+		pm_runtime_disable(&card->dev);
+	pm_runtime_put_noidle(&card->dev);
 	mmc_blk_remove_req(md);
 	mmc_set_drvdata(card, NULL);
 }
@@ -1911,6 +1933,7 @@ static int mmc_blk_suspend(struct mmc_card *card, pm_message_t state)
 	struct mmc_blk_data *md = mmc_get_drvdata(card);
 
 	if (md) {
+		pm_runtime_get_sync(&card->dev);
 		mmc_queue_suspend(&md->queue);
 		list_for_each_entry(part_md, &md->part, part) {
 			mmc_queue_suspend(&part_md->queue);
@@ -1934,6 +1957,7 @@ static int mmc_blk_resume(struct mmc_card *card)
 		list_for_each_entry(part_md, &md->part, part) {
 			mmc_queue_resume(&part_md->queue);
 		}
+		pm_runtime_put(&card->dev);
 	}
 	return 0;
 }

@@ -479,6 +479,17 @@ static int mmc_read_ext_csd(struct mmc_card *card, u8 *ext_csd)
 	}
 
 	if (card->ext_csd.rev >= 5) {
+		/* check whether the eMMC card support BKOPS */
+		if (ext_csd[EXT_CSD_BKOPS_SUPPORT] & 0x1) {
+			card->ext_csd.bkops = 1;
+			card->ext_csd.bkops_en = ext_csd[EXT_CSD_BKOPS_EN];
+			card->ext_csd.raw_bkops_status =
+				ext_csd[EXT_CSD_BKOPS_STATUS];
+			if (!card->ext_csd.bkops_en)
+				pr_info("%s: Didn't set BKOPS_EN bit!\n",
+						mmc_hostname(card->host));
+		}
+
 		/* check whether the eMMC card supports HPI */
 		if (ext_csd[EXT_CSD_HPI_FEATURES] & 0x1) {
 			card->ext_csd.hpi = 1;
@@ -1307,14 +1318,14 @@ static void mmc_detect(struct mmc_host *host)
 	BUG_ON(!host);
 	BUG_ON(!host->card);
 
-	mmc_claim_host(host);
+	mmc_get_card(host->card);
 
 	/*
 	 * Just check if our card has been removed.
 	 */
 	err = _mmc_detect_card_removed(host);
 
-	mmc_release_host(host);
+	mmc_put_card(host->card);
 
 	if (err) {
 		mmc_remove(host);
@@ -1337,11 +1348,13 @@ static int mmc_suspend(struct mmc_host *host)
 	BUG_ON(!host->card);
 
 	mmc_claim_host(host);
-	if (mmc_card_can_sleep(host))
+	if (mmc_card_can_sleep(host)) {
 		err = mmc_card_sleep(host);
-	else if (!mmc_host_is_spi(host))
+		if (!err)
+			mmc_card_set_sleep(host->card);
+	} else if (!mmc_host_is_spi(host))
 		mmc_deselect_cards(host);
-	host->card->state &= ~MMC_STATE_HIGHSPEED;
+	host->card->state &= ~(MMC_STATE_HIGHSPEED | MMC_STATE_HIGHSPEED_200);
 	mmc_release_host(host);
 
 	return err;
@@ -1361,8 +1374,53 @@ static int mmc_resume(struct mmc_host *host)
 	BUG_ON(!host->card);
 
 	mmc_claim_host(host);
-	err = mmc_init_card(host, host->ocr, host->card);
+	if (mmc_card_is_sleep(host->card)) {
+		err = mmc_card_awake(host);
+		mmc_card_clr_sleep(host->card);
+	} else
+		err = mmc_init_card(host, host->ocr, host->card);
 	mmc_release_host(host);
+
+	return err;
+}
+
+
+/*
+ * Callback for runtime_suspend.
+ */
+static int mmc_runtime_suspend(struct mmc_host *host)
+{
+	int err;
+
+	if (!(host->caps & MMC_CAP_AGGRESSIVE_PM))
+		return 0;
+
+	err = mmc_suspend(host);
+	if (err) {
+		pr_err("%s: error %d doing aggessive suspend\n",
+			mmc_hostname(host), err);
+		return err;
+	}
+
+	mmc_power_off(host);
+	return err;
+}
+
+/*
+ * Callback for runtime_resume.
+ */
+static int mmc_runtime_resume(struct mmc_host *host)
+{
+	int err;
+
+	if (!(host->caps & MMC_CAP_AGGRESSIVE_PM))
+		return 0;
+
+	mmc_power_up(host);
+	err = mmc_resume(host);
+	if (err)
+		pr_err("%s: error %d doing aggessive resume\n",
+			mmc_hostname(host), err);
 
 	return err;
 }
@@ -1371,7 +1429,8 @@ static int mmc_power_restore(struct mmc_host *host)
 {
 	int ret;
 
-	host->card->state &= ~MMC_STATE_HIGHSPEED;
+	host->card->state &= ~(MMC_STATE_HIGHSPEED | MMC_STATE_HIGHSPEED_200);
+	mmc_card_clr_sleep(host->card);
 	mmc_claim_host(host);
 	ret = mmc_init_card(host, host->ocr, host->card);
 	mmc_release_host(host);
@@ -1427,6 +1486,8 @@ static const struct mmc_bus_ops mmc_ops_unsafe = {
 	.detect = mmc_detect,
 	.suspend = mmc_suspend,
 	.resume = mmc_resume,
+	.runtime_suspend = mmc_runtime_suspend,
+	.runtime_resume = mmc_runtime_resume,
 	.power_restore = mmc_power_restore,
 	.alive = mmc_alive,
 };

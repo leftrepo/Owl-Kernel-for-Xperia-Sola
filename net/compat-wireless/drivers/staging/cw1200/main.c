@@ -48,7 +48,7 @@ MODULE_LICENSE("GPL");
 MODULE_ALIAS("cw1200_core");
 
 /* Accept MAC address of the form macaddr=0x00,0x80,0xE1,0x30,0x40,0x50 */
-static u8 cw1200_mac_template[ETH_ALEN] = {0x00, 0x80, 0xe1, 0x00, 0x00, 0x00};
+static u8 cw1200_mac_template[ETH_ALEN] = {0x00, 0x80, 0xe1, 0x30, 0x40, 0x50}; //3 последних значения-нули(по умолчанию). Из-за этого после перезагрузки mac-адрес генерируется случайным образом
 module_param_array_named(macaddr, cw1200_mac_template, byte, NULL, S_IRUGO);
 MODULE_PARM_DESC(macaddr, "MAC address");
 
