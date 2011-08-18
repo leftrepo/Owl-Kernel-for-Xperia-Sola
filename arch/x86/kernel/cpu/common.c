@@ -22,7 +22,7 @@
 #include <linux/topology.h>
 #include <linux/cpumask.h>
 #include <asm/pgtable.h>
-#include <asm/atomic.h>
+#include <linux/atomic.h>
 #include <asm/proto.h>
 #include <asm/setup.h>
 #include <asm/apic.h>
@@ -676,10 +676,15 @@ static void __init early_identify_cpu(struct cpuinfo_x86 *c)
 	if (this_cpu->c_early_init)
 		this_cpu->c_early_init(c);
 
+#ifdef CONFIG_SMP
 	c->cpu_index = 0;
+#endif
 	filter_cpuid_features(c, false);
 
 	setup_smep(c);
+
+	if (this_cpu->c_bsp_init)
+		this_cpu->c_bsp_init(c);
 }
 
 void __init early_cpu_init(void)
@@ -759,7 +764,10 @@ static void __cpuinit generic_identify(struct cpuinfo_x86 *c)
 		c->apicid = c->initial_apicid;
 # endif
 #endif
+
+#ifdef CONFIG_X86_HT
 		c->phys_proc_id = c->initial_apicid;
+#endif
 	}
 
 	setup_smep(c);

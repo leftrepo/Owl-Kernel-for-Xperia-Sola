@@ -1,0 +1,13 @@
+--- fs/fs-writeback.c
++++ fs/fs-writeback.c
+@@ -670,10 +670,6 @@
+ 
+ 	global_dirty_limits(&background_thresh, &dirty_thresh);
+ 
+-	if (global_page_state(NR_FILE_DIRTY) +
+-	    global_page_state(NR_UNSTABLE_NFS) > background_thresh)
+-		return true;
+-
+ 	if (bdi_stat(bdi, BDI_RECLAIMABLE) >
+ 				bdi_dirty_limit(bdi, background_thresh))
+ 		return true;

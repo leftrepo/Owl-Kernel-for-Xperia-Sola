@@ -9,6 +9,7 @@
 #include <linux/smp.h>
 #include <linux/ftrace.h>
 #include <linux/delay.h>
+#include <linux/export.h>
 
 #include <asm/apic.h>
 #include <asm/io_apic.h>
@@ -159,6 +160,10 @@ u64 arch_irq_stat_cpu(unsigned int cpu)
 u64 arch_irq_stat(void)
 {
 	u64 sum = atomic_read(&irq_err_count);
+
+#ifdef CONFIG_X86_IO_APIC
+	sum += atomic_read(&irq_mis_count);
+#endif
 	return sum;
 }
 

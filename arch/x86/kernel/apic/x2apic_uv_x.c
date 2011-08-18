@@ -672,17 +672,10 @@ void __cpuinit uv_cpu_init(void)
 /*
  * When NMI is received, print a stack trace.
  */
-int uv_handle_nmi(struct notifier_block *self, unsigned long reason, void *data)
+int uv_handle_nmi(unsigned int reason, struct pt_regs *regs)
 {
 	unsigned long real_uv_nmi;
 	int bid;
-
-	if (reason != DIE_NMIUNKNOWN)
-		return NOTIFY_OK;
-
-	if (in_crash_kexec)
-		/* do nothing if entering the crash kernel */
-		return NOTIFY_OK;
 
 	/*
 	 * Each blade has an MMR that indicates when an NMI has been sent
@@ -704,7 +697,7 @@ int uv_handle_nmi(struct notifier_block *self, unsigned long reason, void *data)
 	}
 
 	if (likely(__get_cpu_var(cpu_last_nmi_count) == uv_blade_info[bid].nmi_count))
-		return NOTIFY_DONE;
+		return NMI_DONE;
 
 	__get_cpu_var(cpu_last_nmi_count) = uv_blade_info[bid].nmi_count;
 
@@ -717,17 +710,12 @@ int uv_handle_nmi(struct notifier_block *self, unsigned long reason, void *data)
 	dump_stack();
 	spin_unlock(&uv_nmi_lock);
 
-	return NOTIFY_STOP;
+	return NMI_HANDLED;
 }
-
-static struct notifier_block uv_dump_stack_nmi_nb = {
-	.notifier_call	= uv_handle_nmi,
-	.priority = NMI_LOCAL_LOW_PRIOR - 1,
-};
 
 void uv_register_nmi_notifier(void)
 {
-	if (register_die_notifier(&uv_dump_stack_nmi_nb))
+	if (register_nmi_handler(NMI_UNKNOWN, uv_handle_nmi, 0, "uv"))
 		printk(KERN_WARNING "UV NMI handler failed to register\n");
 }
 
@@ -779,12 +767,7 @@ void __init uv_system_init(void)
 	for(i = 0; i < UVH_NODE_PRESENT_TABLE_DEPTH; i++)
 		uv_possible_blades +=
 		  hweight64(uv_read_local_mmr( UVH_NODE_PRESENT_TABLE + i * 8));
-
-	/* uv_num_possible_blades() is really the hub count */
-	printk(KERN_INFO "UV: Found %d blades, %d hubs\n",
-			is_uv1_hub() ? uv_num_possible_blades() :
-			(uv_num_possible_blades() + 1) / 2,
-			uv_num_possible_blades());
+	printk(KERN_DEBUG "UV: Found %d blades\n", uv_num_possible_blades());
 
 	bytes = sizeof(struct uv_blade_info) * uv_num_possible_blades();
 	uv_blade_info = kzalloc(bytes, GFP_KERNEL);
