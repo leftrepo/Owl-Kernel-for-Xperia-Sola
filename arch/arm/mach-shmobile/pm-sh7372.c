@@ -15,6 +15,12 @@
 #include <linux/list.h>
 #include <linux/err.h>
 #include <linux/slab.h>
+<<<<<<< HEAD
+=======
+#include <linux/pm_clock.h>
+#include <linux/platform_device.h>
+#include <linux/delay.h>
+>>>>>>> b5e8d26... PM: Move clock-related definitions and headers to separate file
 #include <asm/system.h>
 #include <asm/io.h>
 #include <asm/tlbflush.h>

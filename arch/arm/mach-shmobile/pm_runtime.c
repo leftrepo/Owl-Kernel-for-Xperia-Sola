@@ -14,6 +14,11 @@
 #include <linux/kernel.h>
 #include <linux/io.h>
 #include <linux/pm_runtime.h>
+<<<<<<< HEAD
+=======
+#include <linux/pm_domain.h>
+#include <linux/pm_clock.h>
+>>>>>>> b5e8d26... PM: Move clock-related definitions and headers to separate file
 #include <linux/platform_device.h>
 #include <linux/clk.h>
 #include <linux/sh_clk.h>
