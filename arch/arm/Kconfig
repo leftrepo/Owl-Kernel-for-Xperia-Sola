@@ -224,14 +224,16 @@ config ARM_PATCH_PHYS_VIRT
 	  this feature (eg, building a kernel for a single machine) and
 	  you need to shrink the kernel to the minimal size.
 
-config NO_MACH_MEMORY_H
+config NEED_MACH_MEMORY_H
 	bool
 	help
-	  Select this when mach/memory.h is removed.
+	  Select this when mach/memory.h is required to provide special
+	  definitions for this platform.  The need for mach/memory.h should
+	  be avoided when possible.
 
 config PHYS_OFFSET
 	hex "Physical address of main memory"
-	depends on !ARM_PATCH_PHYS_VIRT && NO_MACH_MEMORY_H
+	depends on !ARM_PATCH_PHYS_VIRT && !NEED_MACH_MEMORY_H
 	help
 	  Please provide the physical address corresponding to the
 	  location of main memory in your system.
@@ -271,6 +273,7 @@ config ARCH_INTEGRATOR
 	select GENERIC_CLOCKEVENTS
 	select PLAT_VERSATILE
 	select PLAT_VERSATILE_FPGA_IRQ
+	select NEED_MACH_MEMORY_H
 	help
 	  Support for ARM's Integrator platform.
 
@@ -286,6 +289,7 @@ config ARCH_REALVIEW
 	select PLAT_VERSATILE_CLCD
 	select ARM_TIMER_SP804
 	select GPIO_PL061 if GPIOLIB
+	select NEED_MACH_MEMORY_H
 	help
 	  This enables support for ARM Ltd RealView boards.
 
@@ -346,6 +350,7 @@ config ARCH_CLPS711X
 	bool "Cirrus Logic CLPS711x/EP721x-based"
 	select CPU_ARM720T
 	select ARCH_USES_GETTIMEOFFSET
+	select NEED_MACH_MEMORY_H
 	help
 	  Support for Cirrus Logic 711x/721x based boards.
 
@@ -373,6 +378,7 @@ config ARCH_EBSA110
 	select ISA
 	select NO_IOPORT
 	select ARCH_USES_GETTIMEOFFSET
+	select NEED_MACH_MEMORY_H
 	help
 	  This is an evaluation board for the StrongARM processor available
 	  from Digital. It has limited hardware on-board, including an
@@ -388,6 +394,7 @@ config ARCH_EP93XX
 	select ARCH_REQUIRE_GPIOLIB
 	select ARCH_HAS_HOLES_MEMORYMODEL
 	select ARCH_USES_GETTIMEOFFSET
+	select NEED_MEMORY_H
 	help
 	  This enables support for the Cirrus EP93xx series of CPUs.
 
@@ -396,6 +403,7 @@ config ARCH_FOOTBRIDGE
 	select CPU_SA110
 	select FOOTBRIDGE
 	select GENERIC_CLOCKEVENTS
+	select NEED_MACH_MEMORY_H
 	help
 	  Support for systems based on the DC21285 companion chip
 	  ("FootBridge"), such as the Simtec CATS and the Rebel NetWinder.
@@ -444,6 +452,7 @@ config ARCH_IOP13XX
 	select PCI
 	select ARCH_SUPPORTS_MSI
 	select VMSPLIT_1G
+	select NEED_MACH_MEMORY_H
 	help
 	  Support for Intel's IOP13XX (XScale) family of processors.
 
@@ -474,6 +483,7 @@ config ARCH_IXP23XX
 	select CPU_XSC3
  	select PCI
 	select ARCH_USES_GETTIMEOFFSET
+	select NEED_MACH_MEMORY_H
 	help
 	  Support for Intel's IXP23xx (XScale) family of processors.
 
@@ -483,6 +493,7 @@ config ARCH_IXP2000
 	select CPU_XSCALE
 	select PCI
 	select ARCH_USES_GETTIMEOFFSET
+	select NEED_MACH_MEMORY_H
 	help
 	  Support for Intel's IXP2400/2800 (XScale) family of processors.
 
@@ -584,6 +595,7 @@ config ARCH_KS8695
 	select CPU_ARM922T
 	select ARCH_REQUIRE_GPIOLIB
 	select ARCH_USES_GETTIMEOFFSET
+	select NEED_MACH_MEMORY_H
 	help
 	  Support for Micrel/Kendin KS8695 "Centaur" (ARM922T) based
 	  System-on-Chip devices.
@@ -648,6 +660,8 @@ config ARCH_PXA
 	select TICK_ONESHOT
 	select PLAT_PXA
 	select SPARSE_IRQ
+	select AUTO_ZRELADDR
+	select MULTI_IRQ_HANDLER
 	help
 	  Support for Intel/Marvell's PXA2xx/PXA3xx processor line.
 
@@ -673,6 +687,8 @@ config ARCH_SHMOBILE
 	select NO_IOPORT
 	select SPARSE_IRQ
 	select MULTI_IRQ_HANDLER
+	select PM_GENERIC_DOMAINS if PM
+	select NEED_MACH_MEMORY_H
 	help
 	  Support for Renesas's SH-Mobile and R-Mobile ARM platforms.
 
@@ -687,6 +703,7 @@ config ARCH_RPC
 	select NO_IOPORT
 	select ARCH_SPARSEMEM_ENABLE
 	select ARCH_USES_GETTIMEOFFSET
+	select NEED_MACH_MEMORY_H
 	help
 	  On the Acorn Risc-PC, Linux can support the internal IDE disk and
 	  CD-ROM interface, serial and parallel port, and the floppy drive.
@@ -705,6 +722,7 @@ config ARCH_SA1100
 	select HAVE_SCHED_CLOCK
 	select TICK_ONESHOT
 	select ARCH_REQUIRE_GPIOLIB
+	select NEED_MACH_MEMORY_H
 	help
 	  Support for StrongARM 11x0 based boards.
 
@@ -789,6 +807,7 @@ config ARCH_S5PV210
 	select HAVE_S3C2410_I2C if I2C
 	select HAVE_S3C_RTC if RTC_CLASS
 	select HAVE_S3C2410_WATCHDOG if WATCHDOG
+	select NEED_MACH_MEMORY_H
 	help
 	  Samsung S5PV210/S5PC110 series based systems
 
@@ -803,6 +822,7 @@ config ARCH_EXYNOS4
 	select HAVE_S3C_RTC if RTC_CLASS
 	select HAVE_S3C2410_I2C if I2C
 	select HAVE_S3C2410_WATCHDOG if WATCHDOG
+	select NEED_MACH_MEMORY_H
 	help
 	  Samsung EXYNOS4 series based systems
 
@@ -814,6 +834,7 @@ config ARCH_SHARK
 	select ZONE_DMA
 	select PCI
 	select ARCH_USES_GETTIMEOFFSET
+	select NEED_MACH_MEMORY_H
 	help
 	  Support for the StrongARM based Digital DNARD machine, also known
 	  as "Shark" (<http://www.shark-linux.de/shark.html>).
@@ -841,6 +862,7 @@ config ARCH_U300
 	select CLKDEV_LOOKUP
 	select HAVE_MACH_CLKDEV
 	select GENERIC_GPIO
+	select NEED_MACH_MEMORY_H
 	help
 	  Support for ST-Ericsson U300 series mobile platforms.
 
