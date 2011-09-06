@@ -64,6 +64,7 @@
 
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
+#include <asm/hardware/gic.h>
 
 #include <plat/gpio-nomadik.h>
 #include <plat/i2c.h>
@@ -2474,5 +2475,6 @@ MACHINE_START(NOMADIK, "riogrande")
 	.reserve	= riogrande_reserve,
 	.init_irq	= ux500_init_irq,
 	.timer		= &ux500_timer,
+	.handle_irq	= gic_handle_irq,
 	.init_machine	= mop500_init_machine,
 MACHINE_END
