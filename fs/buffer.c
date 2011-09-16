@@ -41,7 +41,6 @@
 #include <linux/bitops.h>
 #include <linux/mpage.h>
 #include <linux/bit_spinlock.h>
-#include <linux/cleancache.h>
 
 static int fsync_buffers_list(spinlock_t *lock, struct list_head *list);
 
@@ -279,7 +278,6 @@ void invalidate_bdev(struct block_device *bdev)
 	cleancache_invalidate_inode(mapping);
 }
 EXPORT_SYMBOL(invalidate_bdev);
-
 /*
  * Kick the writeback threads then try to free up some ZONE_NORMAL memory.
  */
