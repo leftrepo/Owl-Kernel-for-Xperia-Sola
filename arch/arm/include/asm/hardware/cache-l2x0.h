@@ -103,8 +103,8 @@
 #define L2X0_ADDR_FILTER_EN		1
 
 #ifndef __ASSEMBLY__
-extern void __init l2x0_init(void __iomem *base, __u32 aux_val, __u32 aux_mask);
-extern int l2x0_of_init(__u32 aux_val, __u32 aux_mask);
+extern void __init l2x0_init(void __iomem *base, u32 aux_val, u32 aux_mask);
+extern int l2x0_of_init(u32 aux_val, u32 aux_mask);
 
 struct l2x0_regs {
 	unsigned long phy_base;
