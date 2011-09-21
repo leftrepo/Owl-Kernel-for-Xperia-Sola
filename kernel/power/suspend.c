@@ -347,7 +347,7 @@ int pm_suspend(suspend_state_t state)
 {
 
 	int ret;
-	if (state > PM_SUSPEND_ON && state <= PM_SUSPEND_MAX) {
+	if (state > PM_SUSPEND_ON && state < PM_SUSPEND_MAX) {
 		ret = enter_state(state);
 		if (ret) {
 			suspend_stats.fail++;
