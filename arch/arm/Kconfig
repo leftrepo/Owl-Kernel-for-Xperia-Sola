@@ -164,7 +164,7 @@ config ARM_TICKET_LOCKS
 	depends on SMP
 
 config RWSEM_GENERIC_SPINLOCK
-	def_bool y if PREEMPT_RT_FULL
+	bool
 
 config RWSEM_XCHGADD_ALGORITHM
 	def_bool y if !PREEMPT_RT_FULL

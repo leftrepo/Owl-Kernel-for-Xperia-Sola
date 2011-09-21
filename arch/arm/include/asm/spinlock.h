@@ -265,19 +265,6 @@ static inline int arch_spin_is_contended(arch_spinlock_t *lock)
 }
 #endif
 
-static inline int arch_spin_is_locked(arch_spinlock_t *lock)
-{
-	struct __raw_tickets tickets = ACCESS_ONCE(lock->tickets);
-	return tickets.owner != tickets.next;
-}
-
-static inline int arch_spin_is_contended(arch_spinlock_t *lock)
-{
-	struct __raw_tickets tickets = ACCESS_ONCE(lock->tickets);
-	return (tickets.next - tickets.owner) > 1;
-}
-#define arch_spin_is_contended	arch_spin_is_contended
-
 /*
  * RWLOCKS
  *

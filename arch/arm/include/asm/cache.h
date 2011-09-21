@@ -21,7 +21,7 @@
  * DDR3 interface. Other Cortex cores and architectures may benefit
  * from a different setting.
  */
-#define PREFETCH_DISTANCE 3
+#define PREFETCH_DISTANCE 4
 #else
 /*
  * This value was calibrated on the ARM v6-based SOC used in the Raspbery

@@ -33,7 +33,7 @@
  */
 
 #define COPY_COUNT (PAGE_SZ / (L1_CACHE_BYTES))
-
+		.thumb
 		.text
 	ARM(	.p2align 5	)
 	THUMB(	.p2align 2	)
@@ -42,15 +42,7 @@ ENTRY(copy_page)
 		stmfd	sp!, {r4-r8, lr}
 	PLD(	pld	[r1, #0]		)
 	PLD(	pld	[r1, #L1_CACHE_BYTES]		)
-#if PREFETCH_DISTANCE > 2
-	PLD(	pld	[r1, #2 * L1_CACHE_BYTES]	)
-#if PREFETCH_DISTANCE > 3
-	PLD(	pld	[r1, #3 * L1_CACHE_BYTES]	)
-#if PREFETCH_DISTANCE > 4
-	PLD(	pld	[r1, #4 * L1_CACHE_BYTES]	)
-#endif
-#endif
-#endif
+	PLD(	pld	[r1, #PREFETCH_DISTANCE * L1_CACHE_BYTES]	)
 	PLD(	movs	r2, #(COPY_COUNT - PREFETCH_DISTANCE)	)
 	NO_PLD(	mov	r2, #COPY_COUNT				)
 1:	PLD(	pld	[r1, #PREFETCH_DISTANCE * L1_CACHE_BYTES])
