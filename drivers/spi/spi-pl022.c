@@ -1388,7 +1388,7 @@ err_config_dma:
 static void do_interrupt_dma_transfer(struct pl022 *pl022)
 {
 	/*
-	 * default is to enable all interrupts except RX -
+	 * Default is to enable all interrupts except RX -
 	 * this will be enabled once TX is complete
 	 */
 	u32 irqflags = ENABLE_ALL_INTERRUPTS & ~SSP_IMSC_MASK_RXIM;
@@ -1535,6 +1535,7 @@ static void pump_messages(struct kthread_work *work)
 		spin_unlock_irqrestore(&pl022->queue_lock, flags);
 		return;
 	}
+
 	/* Make sure we are not already running a message */
 	if (pl022->cur_msg) {
 		spin_unlock_irqrestore(&pl022->queue_lock, flags);
@@ -2239,6 +2240,13 @@ pl022_probe(struct amba_device *adev, const struct amba_id *id)
 		dev_err(&adev->dev, "could not retrieve SSP/SPI bus clock\n");
 		goto err_no_clk;
 	}
+
+	status = clk_prepare(pl022->clk);
+	if (status) {
+		dev_err(&adev->dev, "could not prepare SSP/SPI bus clock\n");
+		goto  err_clk_prep;
+	}
+
 	status = clk_enable(pl022->clk);
 	if (status) {
 		dev_err(&adev->dev, "could not enable SSP/SPI bus clock\n");
@@ -2310,6 +2318,8 @@ pl022_probe(struct amba_device *adev, const struct amba_id *id)
  err_no_irq:
 	clk_disable(pl022->clk);
  err_no_clk_en:
+	clk_unprepare(pl022->clk);
+ err_clk_prep:
 	clk_put(pl022->clk);
  err_no_clk:
 	iounmap(pl022->virtbase);
@@ -2345,6 +2355,7 @@ pl022_remove(struct amba_device *adev)
 
 	free_irq(adev->irq[0], pl022);
 	clk_disable(pl022->clk);
+	clk_unprepare(pl022->clk);
 	clk_put(pl022->clk);
 	iounmap(pl022->virtbase);
 	amba_release_regions(adev);
