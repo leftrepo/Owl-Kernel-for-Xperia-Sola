@@ -82,7 +82,7 @@ static inline grant_ref_t *__gnttab_entry(grant_ref_t entry)
 static int get_free_entries(unsigned count)
 {
 	unsigned long flags;
-	int ref, rc;
+	int ref, rc = 0;
 	grant_ref_t head;
 
 	spin_lock_irqsave(&gnttab_list_lock, flags);
@@ -193,7 +193,7 @@ int gnttab_query_foreign_access(grant_ref_t ref)
 
 	nflags = shared[ref].flags;
 
-	return (nflags & (GTF_reading|GTF_writing));
+	return nflags & (GTF_reading|GTF_writing);
 }
 EXPORT_SYMBOL_GPL(gnttab_query_foreign_access);
 
@@ -355,18 +355,9 @@ void gnttab_request_free_callback(struct gnttab_free_callback *callback,
 				  void (*fn)(void *), void *arg, u16 count)
 {
 	unsigned long flags;
-	struct gnttab_free_callback *cb;
-
 	spin_lock_irqsave(&gnttab_list_lock, flags);
-
-	/* Check if the callback is already on the list */
-	cb = gnttab_free_callback_list;
-	while (cb) {
-		if (cb == callback)
-			goto out;
-		cb = cb->next;
-	}
-
+	if (callback->next)
+		goto out;
 	callback->fn = fn;
 	callback->arg = arg;
 	callback->count = count;
@@ -457,7 +448,8 @@ unsigned int gnttab_max_grant_frames(void)
 EXPORT_SYMBOL_GPL(gnttab_max_grant_frames);
 
 int gnttab_map_refs(struct gnttab_map_grant_ref *map_ops,
-		    struct page **pages, unsigned int count)
+			struct gnttab_map_grant_ref *kmap_ops,
+			struct page **pages, unsigned int count)
 {
 	int i, ret;
 	pte_t *pte;
@@ -497,8 +489,7 @@ int gnttab_map_refs(struct gnttab_map_grant_ref *map_ops,
 			 */
 			return -EOPNOTSUPP;
 		}
-		ret = m2p_add_override(mfn, pages[i],
-				       map_ops[i].flags & GNTMAP_contains_pte);
+		ret = m2p_add_override(mfn, pages[i], &kmap_ops[i]);
 		if (ret)
 			return ret;
 	}

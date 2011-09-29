@@ -132,7 +132,7 @@ retry:
 		goto exit;
 	}
 
-	len = d->res[0];
+	len = fwdl ? (d->res[1] << 8 | d->res[2]) : d->res[0];
 	if (len == 0) {
 		dev_dbg(d->dev, "%s: parameters length zero\n", __func__);
 		d->res_size = offset;
@@ -143,6 +143,7 @@ retry:
 		ret = -EIO;
 		goto exit;
 	}
+
 	dev_dbg(d->dev, "%s: parameters length %d\n", __func__, len);
 	ret = i2c_master_recv(d->i2c_client, d->res + offset, len);
 	if (ret != len) {
