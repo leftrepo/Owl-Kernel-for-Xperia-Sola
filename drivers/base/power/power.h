@@ -1,3 +1,5 @@
+#include <linux/pm_qos.h>
+
 #ifdef CONFIG_PM_RUNTIME
 
 extern void pm_runtime_init(struct device *dev);
@@ -42,15 +44,21 @@ extern void (*device_pm_set_timout_handler(void (*new_fun)(unsigned long)))
 static inline void device_pm_init(struct device *dev)
 {
 	spin_lock_init(&dev->power.lock);
+	dev->power.power_state = PMSG_INVALID;
 	pm_runtime_init(dev);
+}
+
+static inline void device_pm_add(struct device *dev)
+{
+	dev_pm_qos_constraints_init(dev);
 }
 
 static inline void device_pm_remove(struct device *dev)
 {
+	dev_pm_qos_constraints_destroy(dev);
 	pm_runtime_remove(dev);
 }
 
-static inline void device_pm_add(struct device *dev) {}
 static inline void device_pm_move_before(struct device *deva,
 					 struct device *devb) {}
 static inline void device_pm_move_after(struct device *deva,
