@@ -39,11 +39,8 @@
 #define L2CAP_DEFAULT_ACK_TO		200
 #define L2CAP_LE_DEFAULT_MTU		23
 
-#define L2CAP_DISC_TIMEOUT		(100)
-#define L2CAP_DISC_REJ_TIMEOUT		(5000)  /*  5 seconds */
-#define L2CAP_ENC_TIMEOUT		(5000)  /*  5 seconds */
-#define L2CAP_CONN_TIMEOUT		(40000) /* 40 seconds */
-#define L2CAP_INFO_TIMEOUT		(4000)  /*  4 seconds */
+#define L2CAP_CONN_TIMEOUT	(40000) /* 40 seconds */
+#define L2CAP_INFO_TIMEOUT	(4000)  /*  4 seconds */
 
 /* L2CAP socket address */
 struct sockaddr_l2 {
@@ -94,13 +91,17 @@ struct l2cap_conninfo {
 #define L2CAP_CONN_PARAM_UPDATE_REQ	0x12
 #define L2CAP_CONN_PARAM_UPDATE_RSP	0x13
 
-/* L2CAP feature mask */
+/* L2CAP extended feature mask */
 #define L2CAP_FEAT_FLOWCTL	0x00000001
 #define L2CAP_FEAT_RETRANS	0x00000002
+#define L2CAP_FEAT_BIDIR_QOS	0x00000004
 #define L2CAP_FEAT_ERTM		0x00000008
 #define L2CAP_FEAT_STREAMING	0x00000010
 #define L2CAP_FEAT_FCS		0x00000020
+#define L2CAP_FEAT_EXT_FLOW	0x00000040
 #define L2CAP_FEAT_FIXED_CHAN	0x00000080
+#define L2CAP_FEAT_EXT_WINDOW	0x00000100
+#define L2CAP_FEAT_UCD		0x00000200
 
 /* L2CAP checksum option */
 #define L2CAP_FCS_NONE		0x00
@@ -132,6 +133,11 @@ struct l2cap_conninfo {
 #define L2CAP_SDU_END               0x8000
 #define L2CAP_SDU_CONTINUE          0xC000
 
+/* L2CAP Command rej. reasons */
+#define L2CAP_REJ_NOT_UNDERSTOOD	0x0000
+#define L2CAP_REJ_MTU_EXCEEDED		0x0001
+#define L2CAP_REJ_INVALID_CID		0x0002
+
 /* L2CAP structures */
 struct l2cap_hdr {
 	__le16     len;
@@ -146,8 +152,19 @@ struct l2cap_cmd_hdr {
 } __packed;
 #define L2CAP_CMD_HDR_SIZE	4
 
-struct l2cap_cmd_rej {
+struct l2cap_cmd_rej_unk {
 	__le16     reason;
+} __packed;
+
+struct l2cap_cmd_rej_mtu {
+	__le16     reason;
+	__le16     max_mtu;
+} __packed;
+
+struct l2cap_cmd_rej_cid {
+	__le16     reason;
+	__le16     scid;
+	__le16     dcid;
 } __packed;
 
 struct l2cap_conn_req {
@@ -255,13 +272,13 @@ struct l2cap_info_rsp {
 } __packed;
 
 /* info type */
-#define L2CAP_IT_CL_MTU     0x0001
-#define L2CAP_IT_FEAT_MASK  0x0002
-#define L2CAP_IT_FIXED_CHAN 0x0003
+#define L2CAP_IT_CL_MTU		0x0001
+#define L2CAP_IT_FEAT_MASK	0x0002
+#define L2CAP_IT_FIXED_CHAN	0x0003
 
 /* info result */
-#define L2CAP_IR_SUCCESS    0x0000
-#define L2CAP_IR_NOTSUPP    0x0001
+#define L2CAP_IR_SUCCESS	0x0000
+#define L2CAP_IR_NOTSUPP	0x0001
 
 struct l2cap_conn_param_update_req {
 	__le16      min;
