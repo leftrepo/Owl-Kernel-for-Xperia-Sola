@@ -320,13 +320,13 @@ static void __init cacheid_init(void)
 			}
 		} else {
 			arch = CPU_ARCH_ARMv6;
-                       if (cachetype & (1 << 23))
-                               cacheid = CACHEID_VIPT_ALIASING;
-                       else
-                               cacheid = CACHEID_VIPT_NONALIASING;
-                }
-               if (cpu_has_aliasing_icache(arch))
-                      cacheid |= CACHEID_VIPT_I_ALIASING;
+			if (cachetype & (1 << 23))
+				cacheid = CACHEID_VIPT_ALIASING;
+			else
+				cacheid = CACHEID_VIPT_NONALIASING;
+		}
+		if (cpu_has_aliasing_icache(arch))
+			cacheid |= CACHEID_VIPT_I_ALIASING;
 	} else {
 		cacheid = CACHEID_VIVT;
 	}
@@ -482,8 +482,10 @@ static void __init setup_processor(void)
 	       cpu_name, read_cpuid_id(), read_cpuid_id() & 15,
 	       proc_arch[cpu_architecture()], cr_alignment);
 
-	sprintf(init_utsname()->machine, "%s%c", list->arch_name, ENDIANNESS);
-	sprintf(elf_platform, "%s%c", list->elf_name, ENDIANNESS);
+	snprintf(init_utsname()->machine, __NEW_UTS_LEN + 1, "%s%c",
+		 list->arch_name, ENDIANNESS);
+	snprintf(elf_platform, ELF_PLATFORM_SIZE, "%s%c",
+		 list->elf_name, ENDIANNESS);
 	elf_hwcap = list->elf_hwcap;
 #ifndef CONFIG_ARM_THUMB
 	elf_hwcap &= ~HWCAP_THUMB;
