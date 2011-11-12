@@ -29,6 +29,7 @@
 #include <mach/hardware.h>
 #include <mach/regs-clock.h>
 
+#include <plat/cpu.h>
 extern void exynos4_secondary_startup(void);
 
 /*

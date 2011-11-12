@@ -154,7 +154,9 @@ void __init exynos4_init_irq(void)
 {
 	int irq;
 
-	gic_init(0, IRQ_LOCALTIMER, S5P_VA_GIC_DIST, S5P_VA_GIC_CPU);
+	gic_bank_offset = soc_is_exynos4412() ? 0x4000 : 0x8000;
+
+	gic_init_bases(0, IRQ_PPI(0), S5P_VA_GIC_DIST, S5P_VA_GIC_CPU, gic_bank_offset);
 
 	for (irq = 0; irq < MAX_COMBINER_NR; irq++) {
 
