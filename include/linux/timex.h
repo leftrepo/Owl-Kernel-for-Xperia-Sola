@@ -234,22 +234,8 @@ struct timex {
 extern unsigned long tick_usec;		/* USER_HZ period (usec) */
 extern unsigned long tick_nsec;		/* ACTHZ          period (nsec) */
 
-/*
- * phase-lock loop variables
- */
-extern int time_status;		/* clock synchronization status bits */
-
 extern void ntp_init(void);
 extern void ntp_clear(void);
-
-/**
- * ntp_synced - Returns 1 if the NTP status is not UNSYNC
- *
- */
-static inline int ntp_synced(void)
-{
-	return !(time_status & STA_UNSYNC);
-}
 
 /* Required to safely shift negative values */
 #define shift_right(x, s) ({	\
