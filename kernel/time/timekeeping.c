@@ -73,6 +73,18 @@ struct timekeeper {
 
 static struct timekeeper timekeeper;
 
+/*
+ * This read-write spinlock protects us from races in SMP while
+ * playing with xtime.
+ */
+__cacheline_aligned_in_smp DEFINE_SEQLOCK(xtime_lock);
+
+
+/* flag for if timekeeping is suspended */
+int __read_mostly timekeeping_suspended;
+
+
+
 /**
  * timekeeper_setup_internals - Set up internals to use clocksource clock.
  *
@@ -157,23 +169,8 @@ static inline s64 timekeeping_get_ns_raw(void)
 	return clocksource_cyc2ns(cycle_delta, clock->mult, clock->shift);
 }
 
-/*
- * This read-write spinlock protects us from races in SMP while
- * playing with xtime.
- */
-__cacheline_aligned_in_smp DEFINE_SEQLOCK(xtime_lock);
-
-/* must hold write on xtime_lock */
-static void update_rt_offset(void)
-{
-	struct timespec tmp, *wtm = &wall_to_monotonic;
-
-	set_normalized_timespec(&tmp, -wtm->tv_sec, -wtm->tv_nsec);
-	offs_real = timespec_to_ktime(tmp);
-}
-
-/* must hold write on xtime_lock */
-static void timekeeping_update(bool clearntp)
+/* must hold xtime_lock */
+void timekeeping_leap_insert(int leapsecond)
 {
 	timekeeper.xtime.tv_sec += leapsecond;
 	timekeeper.wall_to_monotonic.tv_sec -= leapsecond;
