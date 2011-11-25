@@ -40,7 +40,7 @@
 #include <linux/magic.h>
 #include <linux/slab.h>
 #include <linux/cleancache.h>
-#include <linux/mnt_namespace.h>
+#include <linux/ratelimit.h>
 #include "compat.h"
 #include "delayed-inode.h"
 #include "ctree.h"
