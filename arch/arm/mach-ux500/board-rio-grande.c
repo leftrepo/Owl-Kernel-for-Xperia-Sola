@@ -2469,7 +2469,7 @@ int pins_for_u9500(void)
 
 MACHINE_START(NOMADIK, "riogrande")
 	/* Maintainer: Sony Ericsson */
-	.boot_params	= 0x00000100,
+	.atag_offset	= 0x00000100,
 	.map_io		= u8500_map_io,
 	.reserve	= riogrande_reserve,
 	.init_irq	= ux500_init_irq,

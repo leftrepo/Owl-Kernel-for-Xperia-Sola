@@ -354,10 +354,6 @@
  * Allow 16MB-aligned ioremap pages
  */
 /*
- * Size of DMA-consistent memory region.  Must be multiple of 2M,
- * between 2MB and 14MB inclusive.
- */
-/*
  * We fix the TCM memories max 32 KiB ITCM resp DTCM at these
  * locations
  */
