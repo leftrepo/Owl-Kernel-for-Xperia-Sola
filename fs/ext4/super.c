@@ -1632,6 +1632,7 @@ static int parse_options(char *options, struct super_block *sb,
 #endif
 	return 1;
 }
+
 static inline void ext4_show_quota_options(struct seq_file *seq,
 					   struct super_block *sb)
 {
@@ -1737,7 +1738,7 @@ static int ext4_show_options(struct seq_file *seq, struct dentry *root)
 	}
 	if (sbi->s_max_batch_time != EXT4_DEF_MAX_BATCH_TIME) {
 		seq_printf(seq, ",max_batch_time=%u",
-			   (unsigned) sbi->s_min_batch_time);
+			   (unsigned) sbi->s_max_batch_time);
 	}
 
 	/*
@@ -4633,7 +4634,7 @@ static int ext4_quota_on(struct super_block *sb, int type, int format_id,
 		return -EINVAL;
 
 	/* Quotafile not on the same filesystem? */
-	if (path->mnt->mnt_sb != sb)
+	if (path->dentry->d_sb != sb)
 		return -EXDEV;
 	/* Journaling quota? */
 	if (EXT4_SB(sb)->s_qf_names[type]) {
