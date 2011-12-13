@@ -1654,12 +1654,11 @@ static void blkiocg_attach(struct cgroup_subsys *ss, struct cgroup *cgrp,
 	struct task_struct *task;
 	struct io_context *ioc;
 
-	cgroup_taskset_for_each(task, cgrp, tset) {
-		task_lock(task);
-		ioc = task->io_context;
-		if (ioc)
-			ioc->cgroup_changed = 1;
-		task_unlock(task);
+	/* we don't lose anything even if ioc allocation fails */
+	ioc = get_task_io_context(tsk, GFP_ATOMIC, NUMA_NO_NODE);
+	if (ioc) {
+		ioc->cgroup_changed = 1;
+		put_io_context(ioc);
 	}
 }
 
