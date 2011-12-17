@@ -109,31 +109,7 @@ static int amba_legacy_resume(struct device *dev)
 	return ret;
 }
 
-int amba_pm_prepare(struct device *dev)
-{
-	struct device_driver *drv = dev->driver;
-	int ret = 0;
-
-	if (drv && drv->pm && drv->pm->prepare)
-		ret = drv->pm->prepare(dev);
-
-	return ret;
-}
-
-void amba_pm_complete(struct device *dev)
-{
-	struct device_driver *drv = dev->driver;
-
-	if (drv && drv->pm && drv->pm->complete)
-		drv->pm->complete(dev);
-}
-
-#else /* !CONFIG_PM_SLEEP */
-
-#define amba_pm_prepare		NULL
-#define amba_pm_complete		NULL
-
-#endif /* !CONFIG_PM_SLEEP */
+#endif /* CONFIG_PM_SLEEP */
 
 #ifdef CONFIG_SUSPEND
 
@@ -150,22 +126,6 @@ int amba_pm_suspend(struct device *dev)
 			ret = drv->pm->suspend(dev);
 	} else {
 		ret = amba_legacy_suspend(dev, PMSG_SUSPEND);
-	}
-
-	return ret;
-}
-
-int amba_pm_suspend_noirq(struct device *dev)
-{
-	struct device_driver *drv = dev->driver;
-	int ret = 0;
-
-	if (!drv)
-		return 0;
-
-	if (drv->pm) {
-		if (drv->pm->suspend_noirq)
-			ret = drv->pm->suspend_noirq(dev);
 	}
 
 	return ret;
@@ -189,28 +149,10 @@ int amba_pm_resume(struct device *dev)
 	return ret;
 }
 
-int amba_pm_resume_noirq(struct device *dev)
-{
-	struct device_driver *drv = dev->driver;
-	int ret = 0;
-
-	if (!drv)
-		return 0;
-
-	if (drv->pm) {
-		if (drv->pm->resume_noirq)
-			ret = drv->pm->resume_noirq(dev);
-	}
-
-	return ret;
-}
-
 #else /* !CONFIG_SUSPEND */
 
 #define amba_pm_suspend		NULL
 #define amba_pm_resume		NULL
-#define amba_pm_suspend_noirq	NULL
-#define amba_pm_resume_noirq	NULL
 
 #endif /* !CONFIG_SUSPEND */
 
@@ -234,22 +176,6 @@ int amba_pm_freeze(struct device *dev)
 	return ret;
 }
 
-int amba_pm_freeze_noirq(struct device *dev)
-{
-	struct device_driver *drv = dev->driver;
-	int ret = 0;
-
-	if (!drv)
-		return 0;
-
-	if (drv->pm) {
-		if (drv->pm->freeze_noirq)
-			ret = drv->pm->freeze_noirq(dev);
-	}
-
-	return ret;
-}
-
 int amba_pm_thaw(struct device *dev)
 {
 	struct device_driver *drv = dev->driver;
@@ -263,22 +189,6 @@ int amba_pm_thaw(struct device *dev)
 			ret = drv->pm->thaw(dev);
 	} else {
 		ret = amba_legacy_resume(dev);
-	}
-
-	return ret;
-}
-
-int amba_pm_thaw_noirq(struct device *dev)
-{
-	struct device_driver *drv = dev->driver;
-	int ret = 0;
-
-	if (!drv)
-		return 0;
-
-	if (drv->pm) {
-		if (drv->pm->thaw_noirq)
-			ret = drv->pm->thaw_noirq(dev);
 	}
 
 	return ret;
@@ -302,22 +212,6 @@ int amba_pm_poweroff(struct device *dev)
 	return ret;
 }
 
-int amba_pm_poweroff_noirq(struct device *dev)
-{
-	struct device_driver *drv = dev->driver;
-	int ret = 0;
-
-	if (!drv)
-		return 0;
-
-	if (drv->pm) {
-		if (drv->pm->poweroff_noirq)
-			ret = drv->pm->poweroff_noirq(dev);
-	}
-
-	return ret;
-}
-
 int amba_pm_restore(struct device *dev)
 {
 	struct device_driver *drv = dev->driver;
@@ -336,32 +230,12 @@ int amba_pm_restore(struct device *dev)
 	return ret;
 }
 
-int amba_pm_restore_noirq(struct device *dev)
-{
-	struct device_driver *drv = dev->driver;
-	int ret = 0;
-
-	if (!drv)
-		return 0;
-
-	if (drv->pm) {
-		if (drv->pm->restore_noirq)
-			ret = drv->pm->restore_noirq(dev);
-	}
-
-	return ret;
-}
-
 #else /* !CONFIG_HIBERNATE_CALLBACKS */
 
 #define amba_pm_freeze		NULL
 #define amba_pm_thaw		NULL
 #define amba_pm_poweroff		NULL
 #define amba_pm_restore		NULL
-#define amba_pm_freeze_noirq	NULL
-#define amba_pm_thaw_noirq		NULL
-#define amba_pm_poweroff_noirq	NULL
-#define amba_pm_restore_noirq	NULL
 
 #endif /* !CONFIG_HIBERNATE_CALLBACKS */
 
