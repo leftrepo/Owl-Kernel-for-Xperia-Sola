@@ -457,7 +457,14 @@ int machine_check_e500mc(struct pt_regs *regs)
 
 	if (reason & MCSR_DCPERR_MC) {
 		printk("Data Cache Parity Error\n");
-		recoverable = 0;
+
+		/*
+		 * In write shadow mode we auto-recover from the error, but it
+		 * may still get logged and cause a machine check.  We should
+		 * only treat the non-write shadow case as non-recoverable.
+		 */
+		if (!(mfspr(SPRN_L1CSR2) & L1CSR2_DCWS))
+			recoverable = 0;
 	}
 
 	if (reason & MCSR_L2MMU_MHIT) {
@@ -935,9 +942,8 @@ static int emulate_instruction(struct pt_regs *regs)
 			cpu_has_feature(CPU_FTR_DSCR)) {
 		PPC_WARN_EMULATED(mtdscr, regs);
 		rd = (instword >> 21) & 0x1f;
-		current->thread.dscr = regs->gpr[rd];
+		mtspr(SPRN_DSCR, regs->gpr[rd]);
 		current->thread.dscr_inherit = 1;
-		mtspr(SPRN_DSCR, current->thread.dscr);
 		return 0;
 	}
 #endif
@@ -1388,10 +1394,7 @@ void SPEFloatingPointException(struct pt_regs *regs)
 	int code = 0;
 	int err;
 
-	preempt_disable();
-	if (regs->msr & MSR_SPE)
-		giveup_spe(current);
-	preempt_enable();
+	flush_spe_to_thread(current);
 
 	spefscr = current->thread.spefscr;
 	fpexc_mode = current->thread.fpexc_mode;

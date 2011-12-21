@@ -45,7 +45,6 @@ extern atomic_t ppc_n_lost_interrupts;
  * be big enough to enclose whatever representation is used by a given
  * platform.
  */
-#define _IRQ_HW_NUMBER_T
 typedef unsigned long irq_hw_number_t;
 
 /* Interrupt controller "host" data structure. This could be defined as a
@@ -330,6 +329,8 @@ extern void call_do_softirq(struct thread_info *tp);
 extern int call_handle_irq(int irq, void *p1,
 			   struct thread_info *tp, void *func);
 extern void do_IRQ(struct pt_regs *regs);
+
+int irq_choose_cpu(const struct cpumask *mask);
 
 #endif /* _ASM_IRQ_H */
 #endif /* __KERNEL__ */
