@@ -26,7 +26,7 @@
 #include <linux/timex.h>
 #include <linux/jiffies.h>
 #include <linux/cpuset.h>
-#include <linux/module.h>
+#include <linux/export.h>
 #include <linux/notifier.h>
 #include <linux/memcontrol.h>
 #include <linux/mempolicy.h>
@@ -38,7 +38,7 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/oom.h>
 
-int sysctl_panic_on_oom;
+int sysctl_panic_on_oom = 0;
 int sysctl_oom_kill_allocating_task;
 int sysctl_oom_dump_tasks = 1;
 static DEFINE_SPINLOCK(zone_scan_lock);
