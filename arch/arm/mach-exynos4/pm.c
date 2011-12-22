@@ -344,7 +344,7 @@ static void exynos4_pm_prepare(void)
 
 }
 
-static int exynos4_pm_add(struct sys_device *sysdev)
+static int exynos4_pm_add(struct device *dev)
 {
 	pm_cpu_prep = exynos4_pm_prepare;
 	pm_cpu_sleep = exynos4_cpu_suspend;
@@ -373,8 +373,82 @@ void exynos4_scu_enable(void __iomem *scu_base)
 	flush_cache_all();
 }
 
+<<<<<<< HEAD:arch/arm/mach-exynos4/pm.c
 static struct sysdev_driver exynos4_pm_driver = {
 	.add		= exynos4_pm_add,
+=======
+static unsigned long pll_base_rate;
+
+static void exynos4_restore_pll(void)
+{
+	unsigned long pll_con, locktime, lockcnt;
+	unsigned long pll_in_rate;
+	unsigned int p_div, epll_wait = 0, vpll_wait = 0;
+
+	if (pll_base_rate == 0)
+		return;
+
+	pll_in_rate = pll_base_rate;
+
+	/* EPLL */
+	pll_con = exynos4_epll_save[0].val;
+
+	if (pll_con & (1 << 31)) {
+		pll_con &= (PLL46XX_PDIV_MASK << PLL46XX_PDIV_SHIFT);
+		p_div = (pll_con >> PLL46XX_PDIV_SHIFT);
+
+		pll_in_rate /= 1000000;
+
+		locktime = (3000 / pll_in_rate) * p_div;
+		lockcnt = locktime * 10000 / (10000 / pll_in_rate);
+
+		__raw_writel(lockcnt, S5P_EPLL_LOCK);
+
+		s3c_pm_do_restore_core(exynos4_epll_save,
+					ARRAY_SIZE(exynos4_epll_save));
+		epll_wait = 1;
+	}
+
+	pll_in_rate = pll_base_rate;
+
+	/* VPLL */
+	pll_con = exynos4_vpll_save[0].val;
+
+	if (pll_con & (1 << 31)) {
+		pll_in_rate /= 1000000;
+		/* 750us */
+		locktime = 750;
+		lockcnt = locktime * 10000 / (10000 / pll_in_rate);
+
+		__raw_writel(lockcnt, S5P_VPLL_LOCK);
+
+		s3c_pm_do_restore_core(exynos4_vpll_save,
+					ARRAY_SIZE(exynos4_vpll_save));
+		vpll_wait = 1;
+	}
+
+	/* Wait PLL locking */
+
+	do {
+		if (epll_wait) {
+			pll_con = __raw_readl(S5P_EPLL_CON0);
+			if (pll_con & (1 << S5P_EPLLCON0_LOCKED_SHIFT))
+				epll_wait = 0;
+		}
+
+		if (vpll_wait) {
+			pll_con = __raw_readl(S5P_VPLL_CON0);
+			if (pll_con & (1 << S5P_VPLLCON0_LOCKED_SHIFT))
+				vpll_wait = 0;
+		}
+	} while (epll_wait || vpll_wait);
+}
+
+static struct subsys_interface exynos4_pm_interface = {
+	.name		= "exynos4_pm",
+	.subsys		= &exynos4_subsys,
+	.add_dev	= exynos4_pm_add,
+>>>>>>> 4a858cf... arm: convert sysdev_class to a regular subsystem:arch/arm/mach-exynos/pm.c
 };
 
 static __init int exynos4_pm_drvinit(void)
@@ -389,7 +463,18 @@ static __init int exynos4_pm_drvinit(void)
 	tmp |= ((0xFF << 8) | (0x1F << 1));
 	__raw_writel(tmp, S5P_WAKEUP_MASK);
 
+<<<<<<< HEAD:arch/arm/mach-exynos4/pm.c
 	return sysdev_driver_register(&exynos4_sysclass, &exynos4_pm_driver);
+=======
+	pll_base = clk_get(NULL, "xtal");
+
+	if (!IS_ERR(pll_base)) {
+		pll_base_rate = clk_get_rate(pll_base);
+		clk_put(pll_base);
+	}
+
+	return subsys_interface_register(&exynos4_pm_interface);
+>>>>>>> 4a858cf... arm: convert sysdev_class to a regular subsystem:arch/arm/mach-exynos/pm.c
 }
 arch_initcall(exynos4_pm_drvinit);
 
