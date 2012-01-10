@@ -1742,7 +1742,7 @@ static int mmci_save(struct amba_device *dev)
 		spin_unlock_irqrestore(&host->lock, flags);
 
 		clk_disable(host->clk);
-		amba_vcore_disable(dev);
+		//amba_vcore_disable(dev);
 	}
 
 	return ret;
@@ -1756,7 +1756,7 @@ static int mmci_restore(struct amba_device *dev)
 	if (mmc) {
 		struct mmci_host *host = mmc_priv(mmc);
 
-		amba_vcore_enable(dev);
+		//amba_vcore_enable(dev);
 		clk_enable(host->clk);
 
 		spin_lock_irqsave(&host->lock, flags);

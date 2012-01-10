@@ -400,8 +400,10 @@ static struct timespec ab8500_fg_get_time(void)
 	struct timespec time;
 	static int cpu = -1;
 
-	if (cpu == -1)
+	if (cpu == -1) {
+		preempt_disable();
 		cpu = smp_processor_id();
+		preempt_enable();}
 
 	ctime = cpu_clock(cpu);
 	time.tv_nsec = sector_div(ctime, NSEC_PER_SEC);
