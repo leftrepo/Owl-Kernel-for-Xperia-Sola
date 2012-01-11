@@ -40,6 +40,7 @@ void twd_restore(void);
 #else
 static inline void twd_save(void) { }
 static inline void twd_restore(void) { }
+#endif
 #ifdef CONFIG_HAVE_ARM_TWD
 void twd_local_timer_of_register(void);
 #else
