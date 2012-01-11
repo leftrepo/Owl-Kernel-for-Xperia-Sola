@@ -27,10 +27,10 @@
 #include <asm/mach/arch.h>
 #include <asm/mach/irq.h>
 #include <asm/mach/flash.h>
+#include <asm/mach/time.h>
 
 #include <plat/mtu.h>
 
-#include <mach/setup.h>
 #include <mach/nand.h>
 #include <mach/fsmc.h>
 
@@ -252,10 +252,7 @@ static void __init nomadik_timer_init(void)
 	src_cr |= SRC_CR_INIT_VAL;
 	writel(src_cr, io_p2v(NOMADIK_SRC_BASE));
 
-	/* Save global pointer to mtu, used by platform timer code */
-	mtu_base = io_p2v(NOMADIK_MTU0_BASE);
-
-	nmdk_timer_init();
+	nmdk_timer_init(io_p2v(NOMADIK_MTU0_BASE));
 }
 
 static struct sys_timer nomadik_timer = {

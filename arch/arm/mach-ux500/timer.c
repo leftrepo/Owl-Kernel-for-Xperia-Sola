@@ -61,13 +61,14 @@ static void __init ux500_twd_init(void)
 
 static void __init ux500_timer_init(void)
 {
+	void __iomem *mtu_timer_base;
 	void __iomem *prcmu_timer_base;
 
 	if (cpu_is_u5500()) {
-		mtu_base = __io_address(U5500_MTU0_BASE);
+		mtu_timer_base = __io_address(U5500_MTU0_BASE);
 		prcmu_timer_base = __io_address(U5500_PRCMU_TIMER_3_BASE);
 	} else if (cpu_is_u8500() || cpu_is_u9540()) {
-		mtu_base = __io_address(U8500_MTU0_BASE);
+		mtu_timer_base = __io_address(U8500_MTU0_BASE);
 		prcmu_timer_base = __io_address(U8500_PRCMU_TIMER_4_BASE);
 	} else {
 		ux500_unknown_soc();
@@ -94,7 +95,7 @@ static void __init ux500_timer_init(void)
 	 * PRCMU timer, it doesn't occasionally go backwards.
 	 */
 
-	nmdk_timer_init();
+	nmdk_timer_init(mtu_timer_base);
 	if (cpu_is_u5500())
 		db5500_mtimer_init(__io_address(U5500_MTIMER_BASE));
 	clksrc_dbx500_prcmu_init(prcmu_timer_base);
