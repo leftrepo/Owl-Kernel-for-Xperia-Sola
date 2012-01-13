@@ -252,7 +252,7 @@ void machine_kexec(struct kimage *image)
 {
 	void *reboot_code_buffer;
 	void (*rnk)(unsigned long, void *, unsigned long)
-		__noreturn;
+		ATTRIB_NORET;
 
 	/* Mask all interrupts before starting to reboot. */
 	interrupt_mask_set_mask(~0ULL);
