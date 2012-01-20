@@ -15,7 +15,10 @@
 #include <linux/smp.h>
 
 #include <asm/cacheflush.h>
+<<<<<<< HEAD:arch/arm/mach-exynos4/hotplug.c
 #include <asm/cp15.h>
+=======
+>>>>>>> eb50439... ARM: 7293/1: logical_cpu_map: decouple CPU mapping from SMP:arch/arm/mach-exynos/hotplug.c
 #include <asm/smp_plat.h>
 
 #include <mach/regs-pmu.h>
