@@ -9,6 +9,7 @@
 #include <linux/gpio.h>
 #include <linux/io.h>
 #include <linux/string.h>
+#include <linux/bug.h>
 
 #include <asm/mach-types.h>
 #include <plat/pincfg.h>
