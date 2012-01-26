@@ -1456,7 +1456,6 @@ static struct notifier_block __cpuinitdata ratelimit_nb = {
 void __init page_writeback_init(void)
 {
 	int shift;
-	register_early_suspend(&dirty_suspend);
 	writeback_set_ratelimit();
 	register_cpu_notifier(&ratelimit_nb);
 

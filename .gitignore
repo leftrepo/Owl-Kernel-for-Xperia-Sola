@@ -58,6 +58,7 @@ arch/arm/boot/compressed/piggy.*
 arch/arm/boot/compressed/vmlinux
 arch/arm/boot/zImage
 kernel/config_data.h
+usr/initramfs_data.cpio
 # stgit generated dirs
 patches-*
 # quilt's files
