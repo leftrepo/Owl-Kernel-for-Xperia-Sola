@@ -26,6 +26,9 @@
 #include <linux/dma-mapping.h>
 #include <linux/bug.h>
 #include <linux/scatterlist.h>
+#include <linux/bitmap.h>
+#include <linux/types.h>
+#include <asm/page.h>
 
 /**
  * typedef dma_cookie_t - an opaque DMA cookie
@@ -262,6 +265,9 @@ enum dma_slave_buswidth {
  * may or may not be applicable on memory sources.
  * @dst_maxburst: same as src_maxburst but for destination target
  * mutatis mutandis.
+ * @device_fc: Flow Controller Settings. Only valid for slave channels. Fill
+ * with 'true' if peripheral should be flow controller. Direction will be
+ * selected at Runtime.
  *
  * This struct is passed in as configuration data to a DMA engine
  * in order to set up a certain channel for DMA transport at runtime.
@@ -288,6 +294,7 @@ struct dma_slave_config {
 	enum dma_slave_buswidth dst_addr_width;
 	u32 src_maxburst;
 	u32 dst_maxburst;
+	bool device_fc;
 };
 
 static inline const char *dma_chan_name(struct dma_chan *chan)
