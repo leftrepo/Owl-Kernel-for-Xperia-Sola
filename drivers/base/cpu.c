@@ -241,12 +241,13 @@ int __cpuinit register_cpu(struct cpu *cpu, int num)
 	int error;
 
 	cpu->node_id = cpu_to_node(num);
+	memset(&cpu->dev, 0x00, sizeof(struct device));
 	cpu->dev.id = num;
 	cpu->dev.bus = &cpu_subsys;
+	cpu->dev.release = cpu_device_release;
 #ifdef CONFIG_ARCH_HAS_CPU_AUTOPROBE
 	cpu->dev.bus->uevent = arch_cpu_uevent;
 #endif
-	cpu->dev.release = cpu_device_release;
 	error = device_register(&cpu->dev);
 	if (!error && cpu->hotpluggable)
 		register_cpu_control(cpu);
