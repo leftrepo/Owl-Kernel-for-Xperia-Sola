@@ -430,6 +430,7 @@ struct task_struct *find_task_by_vpid(pid_t vnr)
 {
 	return find_task_by_pid_ns(vnr, current->nsproxy->pid_ns);
 }
+EXPORT_SYMBOL_GPL(find_task_by_vpid);
 
 struct pid *get_task_pid(struct task_struct *task, enum pid_type type)
 {
@@ -543,13 +544,13 @@ struct pid *find_ge_pid(int nr, struct pid_namespace *ns)
  */
 void __init pidhash_init(void)
 {
-	int i, pidhash_size;
+	unsigned int i, pidhash_size;
 
 	pid_hash = alloc_large_system_hash("PID", sizeof(*pid_hash), 0, 18,
 					   HASH_EARLY | HASH_SMALL,
 					   &pidhash_shift, NULL,
 					   0, 4096);
-	pidhash_size = 1 << pidhash_shift;
+	pidhash_size = 1U << pidhash_shift;
 
 	for (i = 0; i < pidhash_size; i++)
 		INIT_HLIST_HEAD(&pid_hash[i]);
