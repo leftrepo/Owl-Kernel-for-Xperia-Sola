@@ -18,7 +18,6 @@
 #define IO_SPACE_LIMIT 0xffffffff
 
 #define __io(p)		((void __iomem*)((p) + IXP23XX_PCI_IO_VIRT))
-#define __mem_pci(a)	(a)
 
 static inline void __iomem *
 ixp23xx_ioremap(unsigned long addr, unsigned long size, unsigned int mtype)

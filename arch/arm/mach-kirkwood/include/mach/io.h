@@ -45,7 +45,5 @@ __arch_iounmap(void __iomem *addr)
 #define __arch_ioremap		__arch_ioremap
 #define __arch_iounmap		__arch_iounmap
 #define __io(a)			__io(a)
-#define __mem_pci(a)		(a)
-
 
 #endif
