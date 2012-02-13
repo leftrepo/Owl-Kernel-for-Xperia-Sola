@@ -115,7 +115,6 @@ cifs_read_super(struct super_block *sb)
 
 	if (IS_ERR(inode)) {
 		rc = PTR_ERR(inode);
-		inode = NULL;
 		goto out_no_root;
 	}
 
@@ -123,6 +122,7 @@ cifs_read_super(struct super_block *sb)
 
 	if (!sb->s_root) {
 		rc = -ENOMEM;
+		iput(inode);
 		goto out_no_root;
 	}
 
@@ -143,9 +143,6 @@ cifs_read_super(struct super_block *sb)
 
 out_no_root:
 	cERROR(1, "cifs_read_super: get root inode failed");
-	if (inode)
-		iput(inode);
-
 	return rc;
 }
 
