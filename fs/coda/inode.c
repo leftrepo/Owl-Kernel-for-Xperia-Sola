@@ -21,6 +21,7 @@
 #include <linux/vfs.h>
 #include <linux/slab.h>
 
+#include <asm/system.h>
 #include <asm/uaccess.h>
 
 #include <linux/fs.h>
@@ -203,25 +204,24 @@ static int coda_fill_super(struct super_block *sb, void *data, int silent)
 	printk("coda_read_super: rootfid is %s\n", coda_f2s(&fid));
 	
 	/* make root inode */
-        error = coda_cnode_make(&root, &fid, sb);
-        if ( error || !root ) {
-	    printk("Failure of coda_cnode_make for root: error %d\n", error);
-	    goto error;
+        root = coda_cnode_make(&fid, sb);
+        if (IS_ERR(root)) {
+		error = PTR_ERR(root);
+		printk("Failure of coda_cnode_make for root: error %d\n", error);
+		goto error;
 	} 
 
 	printk("coda_read_super: rootinode is %ld dev %s\n", 
 	       root->i_ino, root->i_sb->s_id);
 	sb->s_root = d_alloc_root(root);
 	if (!sb->s_root) {
+		iput(root);
 		error = -EINVAL;
 		goto error;
 	}
 	return 0;
 
 error:
-	if (root)
-		iput(root);
-
 	mutex_lock(&vc->vc_mutex);
 	bdi_destroy(&vc->bdi);
 	vc->vc_sb = NULL;
