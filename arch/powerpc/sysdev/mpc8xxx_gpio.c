@@ -353,17 +353,20 @@ static void __init mpc8xxx_add_controller(struct device_node *np)
 	if (hwirq == NO_IRQ)
 		goto skip_irq;
 
+<<<<<<< HEAD:arch/powerpc/sysdev/mpc8xxx_gpio.c
 	mpc8xxx_gc->irq =
 		irq_alloc_host(np, IRQ_HOST_MAP_LINEAR, MPC8XXX_GPIO_PINS,
 			       &mpc8xxx_gpio_irq_ops, MPC8XXX_GPIO_PINS);
+=======
+	mpc8xxx_gc->irq = irq_domain_add_linear(np, MPC8XXX_GPIO_PINS,
+					&mpc8xxx_gpio_irq_ops, mpc8xxx_gc);
+>>>>>>> a8db8cf... irq_domain: Replace irq_alloc_host() with revmap-specific initializers:drivers/gpio/gpio-mpc8xxx.c
 	if (!mpc8xxx_gc->irq)
 		goto skip_irq;
 
 	id = of_match_node(mpc8xxx_gpio_ids, np);
 	if (id)
 		mpc8xxx_gc->of_dev_id_data = id->data;
-
-	mpc8xxx_gc->irq->host_data = mpc8xxx_gc;
 
 	/* ack and mask all irqs */
 	out_be32(mm_gc->regs + GPIO_IER, 0xffffffff);
