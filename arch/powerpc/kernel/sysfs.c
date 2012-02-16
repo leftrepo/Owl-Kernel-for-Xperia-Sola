@@ -18,6 +18,7 @@
 #include <asm/machdep.h>
 #include <asm/smp.h>
 #include <asm/pmc.h>
+#include <asm/system.h>
 
 #include "cacheinfo.h"
 
@@ -51,6 +52,7 @@ static ssize_t store_smt_snooze_delay(struct device *dev,
 		return -EINVAL;
 
 	per_cpu(smt_snooze_delay, cpu->dev.id) = snooze;
+	update_smt_snooze_delay(snooze);
 
 	return count;
 }
@@ -177,11 +179,13 @@ SYSFS_PMCSETUP(mmcra, SPRN_MMCRA);
 SYSFS_PMCSETUP(purr, SPRN_PURR);
 SYSFS_PMCSETUP(spurr, SPRN_SPURR);
 SYSFS_PMCSETUP(dscr, SPRN_DSCR);
+SYSFS_PMCSETUP(pir, SPRN_PIR);
 
 static DEVICE_ATTR(mmcra, 0600, show_mmcra, store_mmcra);
 static DEVICE_ATTR(spurr, 0600, show_spurr, NULL);
 static DEVICE_ATTR(dscr, 0600, show_dscr, store_dscr);
 static DEVICE_ATTR(purr, 0600, show_purr, store_purr);
+static DEVICE_ATTR(pir, 0400, show_pir, NULL);
 
 unsigned long dscr_default = 0;
 EXPORT_SYMBOL(dscr_default);
@@ -391,6 +395,9 @@ static void __cpuinit register_cpu_online(unsigned int cpu)
 
 	if (cpu_has_feature(CPU_FTR_DSCR))
 		device_create_file(s, &dev_attr_dscr);
+
+	if (cpu_has_feature(CPU_FTR_PPCAS_ARCH_V2))
+		device_create_file(s, &dev_attr_pir);
 #endif /* CONFIG_PPC64 */
 
 	cacheinfo_cpu_online(cpu);
@@ -461,6 +468,9 @@ static void unregister_cpu_online(unsigned int cpu)
 
 	if (cpu_has_feature(CPU_FTR_DSCR))
 		device_remove_file(s, &dev_attr_dscr);
+
+	if (cpu_has_feature(CPU_FTR_PPCAS_ARCH_V2))
+		device_remove_file(s, &dev_attr_pir);
 #endif /* CONFIG_PPC64 */
 
 	cacheinfo_cpu_offline(cpu);
@@ -592,7 +602,7 @@ static void register_nodes(void)
 int sysfs_add_device_to_node(struct device *dev, int nid)
 {
 	struct node *node = &node_devices[nid];
-	return sysfs_create_link(&node->sysdev.kobj, &dev->kobj,
+	return sysfs_create_link(&node->dev.kobj, &dev->kobj,
 			kobject_name(&dev->kobj));
 }
 EXPORT_SYMBOL_GPL(sysfs_add_device_to_node);
@@ -600,7 +610,7 @@ EXPORT_SYMBOL_GPL(sysfs_add_device_to_node);
 void sysfs_remove_device_from_node(struct device *dev, int nid)
 {
 	struct node *node = &node_devices[nid];
-	sysfs_remove_link(&node->sysdev.kobj, kobject_name(&dev->kobj));
+	sysfs_remove_link(&node->dev.kobj, kobject_name(&dev->kobj));
 }
 EXPORT_SYMBOL_GPL(sysfs_remove_device_from_node);
 
