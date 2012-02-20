@@ -2368,6 +2368,8 @@ static int __init journal_init_caches(void)
 		ret = journal_init_jbd2_journal_head_cache();
 	if (ret == 0)
 		ret = journal_init_handle_cache();
+	if (ret == 0)
+		ret = jbd2_journal_init_transaction_cache();
 	return ret;
 }
 
@@ -2376,6 +2378,7 @@ static void jbd2_journal_destroy_caches(void)
 	jbd2_journal_destroy_revoke_caches();
 	jbd2_journal_destroy_jbd2_journal_head_cache();
 	jbd2_journal_destroy_handle_cache();
+	jbd2_journal_destroy_transaction_cache();
 	jbd2_journal_destroy_slabs();
 }
 
