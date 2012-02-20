@@ -459,6 +459,8 @@ void db8500_prcmu_modem_reset(void);
 void db8500_prcmu_system_reset(u16 reset_code);
 int db8500_prcmu_set_power_state(u8 state, bool keep_ulp_clk, bool keep_ap_pll);
 u8 db8500_prcmu_get_power_state_result(void);
+int db8500_prcmu_gic_decouple(void);
+int db8500_prcmu_gic_recouple(void);
 void db8500_prcmu_enable_wakeups(u32 wakeups);
 int db8500_prcmu_request_clock(u8 clock, bool enable);
 int db8500_prcmu_set_display_clocks(void);
