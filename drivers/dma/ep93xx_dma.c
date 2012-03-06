@@ -122,7 +122,6 @@ struct ep93xx_dma_desc {
  * @lock: lock protecting the fields following
  * @flags: flags for the channel
  * @buffer: which buffer to use next (0/1)
- * @last_completed: last completed cookie value
  * @active: flattened chain of descriptors currently being processed
  * @queue: pending descriptors which are handled next
  * @free_list: list of free descriptors which can be used
@@ -157,7 +156,6 @@ struct ep93xx_dma_chan {
 #define EP93XX_DMA_IS_CYCLIC		0
 
 	int				buffer;
-	dma_cookie_t			last_completed;
 	struct list_head		active;
 	struct list_head		queue;
 	struct list_head		free_list;
@@ -246,6 +244,9 @@ static void ep93xx_dma_set_active(struct ep93xx_dma_chan *edmac,
 static struct ep93xx_dma_desc *
 ep93xx_dma_get_active(struct ep93xx_dma_chan *edmac)
 {
+	if (list_empty(&edmac->active))
+		return NULL;
+
 	return list_first_entry(&edmac->active, struct ep93xx_dma_desc, node);
 }
 
@@ -263,16 +264,22 @@ ep93xx_dma_get_active(struct ep93xx_dma_chan *edmac)
  */
 static bool ep93xx_dma_advance_active(struct ep93xx_dma_chan *edmac)
 {
+	struct ep93xx_dma_desc *desc;
+
 	list_rotate_left(&edmac->active);
 
 	if (test_bit(EP93XX_DMA_IS_CYCLIC, &edmac->flags))
 		return true;
 
+	desc = ep93xx_dma_get_active(edmac);
+	if (!desc)
+		return false;
+
 	/*
 	 * If txd.cookie is set it means that we are back in the first
 	 * descriptor in the chain and hence done with it.
 	 */
-	return !ep93xx_dma_get_active(edmac)->txd.cookie;
+	return !desc->txd.cookie;
 }
 
 /*
@@ -327,8 +334,14 @@ static void m2p_hw_shutdown(struct ep93xx_dma_chan *edmac)
 
 static void m2p_fill_desc(struct ep93xx_dma_chan *edmac)
 {
-	struct ep93xx_dma_desc *desc = ep93xx_dma_get_active(edmac);
+	struct ep93xx_dma_desc *desc;
 	u32 bus_addr;
+
+	desc = ep93xx_dma_get_active(edmac);
+	if (!desc) {
+		dev_warn(chan2dev(edmac), "M2P: empty descriptor list\n");
+		return;
+	}
 
 	if (ep93xx_dma_chan_direction(&edmac->chan) == DMA_MEM_TO_DEV)
 		bus_addr = desc->src_addr;
@@ -459,10 +472,6 @@ static int m2m_hw_setup(struct ep93xx_dma_chan *edmac)
 		 * This IDE part is totally untested. Values below are taken
 		 * from the EP93xx Users's Guide and might not be correct.
 		 */
-		control |= M2M_CONTROL_NO_HDSK;
-		control |= M2M_CONTROL_RSS_IDE;
-		control |= M2M_CONTROL_PW_16;
-
 		if (data->direction == DMA_MEM_TO_DEV) {
 			/* Worst case from the UG */
 			control = (3 << M2M_CONTROL_PWSC_SHIFT);
@@ -473,6 +482,10 @@ static int m2m_hw_setup(struct ep93xx_dma_chan *edmac)
 			control |= M2M_CONTROL_SAH;
 			control |= M2M_CONTROL_TM_RX;
 		}
+
+		control |= M2M_CONTROL_NO_HDSK;
+		control |= M2M_CONTROL_RSS_IDE;
+		control |= M2M_CONTROL_PW_16;
 		break;
 
 	default:
@@ -491,7 +504,13 @@ static void m2m_hw_shutdown(struct ep93xx_dma_chan *edmac)
 
 static void m2m_fill_desc(struct ep93xx_dma_chan *edmac)
 {
-	struct ep93xx_dma_desc *desc = ep93xx_dma_get_active(edmac);
+	struct ep93xx_dma_desc *desc;
+
+	desc = ep93xx_dma_get_active(edmac);
+	if (!desc) {
+		dev_warn(chan2dev(edmac), "M2M: empty descriptor list\n");
+		return;
+	}
 
 	if (edmac->buffer == 0) {
 		writel(desc->src_addr, edmac->regs + M2M_SAR_BASE0);
@@ -669,23 +688,29 @@ static void ep93xx_dma_tasklet(unsigned long data)
 {
 	struct ep93xx_dma_chan *edmac = (struct ep93xx_dma_chan *)data;
 	struct ep93xx_dma_desc *desc, *d;
-	dma_async_tx_callback callback;
-	void *callback_param;
+	dma_async_tx_callback callback = NULL;
+	void *callback_param = NULL;
 	LIST_HEAD(list);
 
 	spin_lock_irq(&edmac->lock);
+	/*
+	 * If dma_terminate_all() was called before we get to run, the active
+	 * list has become empty. If that happens we aren't supposed to do
+	 * anything more than call ep93xx_dma_advance_work().
+	 */
 	desc = ep93xx_dma_get_active(edmac);
-	if (desc->complete) {
-		edmac->last_completed = desc->txd.cookie;
-		list_splice_init(&edmac->active, &list);
+	if (desc) {
+		if (desc->complete) {
+			edmac->chan.completed_cookie = desc->txd.cookie;
+			list_splice_init(&edmac->active, &list);
+		}
+		callback = desc->txd.callback;
+		callback_param = desc->txd.callback_param;
 	}
 	spin_unlock_irq(&edmac->lock);
 
 	/* Pick up the next descriptor from the queue */
 	ep93xx_dma_advance_work(edmac);
-
-	callback = desc->txd.callback;
-	callback_param = desc->txd.callback_param;
 
 	/* Now we can release all the chained descriptors */
 	list_for_each_entry_safe(desc, d, &list, node) {
@@ -706,13 +731,22 @@ static void ep93xx_dma_tasklet(unsigned long data)
 static irqreturn_t ep93xx_dma_interrupt(int irq, void *dev_id)
 {
 	struct ep93xx_dma_chan *edmac = dev_id;
+	struct ep93xx_dma_desc *desc;
 	irqreturn_t ret = IRQ_HANDLED;
 
 	spin_lock(&edmac->lock);
 
+	desc = ep93xx_dma_get_active(edmac);
+	if (!desc) {
+		dev_warn(chan2dev(edmac),
+			 "got interrupt while active list is empty\n");
+		spin_unlock(&edmac->lock);
+		return IRQ_NONE;
+	}
+
 	switch (edmac->edma->hw_interrupt(edmac)) {
 	case INTERRUPT_DONE:
-		ep93xx_dma_get_active(edmac)->complete = true;
+		desc->complete = true;
 		tasklet_schedule(&edmac->tasklet);
 		break;
 
@@ -825,7 +859,7 @@ static int ep93xx_dma_alloc_chan_resources(struct dma_chan *chan)
 		goto fail_clk_disable;
 
 	spin_lock_irq(&edmac->lock);
-	edmac->last_completed = 1;
+	edmac->chan.completed_cookie = 1;
 	edmac->chan.cookie = 1;
 	ret = edmac->edma->hw_setup(edmac);
 	spin_unlock_irq(&edmac->lock);
@@ -1218,7 +1252,7 @@ static enum dma_status ep93xx_dma_tx_status(struct dma_chan *chan,
 
 	spin_lock_irqsave(&edmac->lock, flags);
 	last_used = chan->cookie;
-	last_completed = edmac->last_completed;
+	last_completed = chan->completed_cookie;
 	spin_unlock_irqrestore(&edmac->lock, flags);
 
 	ret = dma_async_is_complete(cookie, last_completed, last_used);

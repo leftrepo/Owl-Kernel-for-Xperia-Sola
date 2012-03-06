@@ -44,7 +44,6 @@
 #define HW_APBHX_CTRL0				0x000
 #define BM_APBH_CTRL0_APB_BURST8_EN		(1 << 29)
 #define BM_APBH_CTRL0_APB_BURST_EN		(1 << 28)
-#define BP_APBH_CTRL0_CLKGATE_CHANNEL		8
 #define BP_APBH_CTRL0_RESET_CHANNEL		16
 #define HW_APBHX_CTRL1				0x010
 #define HW_APBHX_CTRL2				0x020
@@ -111,7 +110,7 @@ struct mxs_dma_chan {
 	int				chan_irq;
 	struct mxs_dma_ccw		*ccw;
 	dma_addr_t			ccw_phys;
-	dma_cookie_t			last_completed;
+	int				desc_count;
 	enum dma_status			status;
 	unsigned int			flags;
 #define MXS_DMA_SG_LOOP			(1 << 0)
@@ -129,23 +128,6 @@ struct mxs_dma_engine {
 	struct device_dma_parameters	dma_parms;
 	struct mxs_dma_chan		mxs_chans[MXS_DMA_CHANNELS];
 };
-
-static inline void mxs_dma_clkgate(struct mxs_dma_chan *mxs_chan, int enable)
-{
-	struct mxs_dma_engine *mxs_dma = mxs_chan->mxs_dma;
-	int chan_id = mxs_chan->chan.chan_id;
-	int set_clr = enable ? MXS_CLR_ADDR : MXS_SET_ADDR;
-
-	/* enable apbh channel clock */
-	if (dma_is_apbh()) {
-		if (apbh_is_old())
-			writel(1 << (chan_id + BP_APBH_CTRL0_CLKGATE_CHANNEL),
-				mxs_dma->base + HW_APBHX_CTRL0 + set_clr);
-		else
-			writel(1 << chan_id,
-				mxs_dma->base + HW_APBHX_CTRL0 + set_clr);
-	}
-}
 
 static void mxs_dma_reset_chan(struct mxs_dma_chan *mxs_chan)
 {
@@ -165,9 +147,6 @@ static void mxs_dma_enable_chan(struct mxs_dma_chan *mxs_chan)
 	struct mxs_dma_engine *mxs_dma = mxs_chan->mxs_dma;
 	int chan_id = mxs_chan->chan.chan_id;
 
-	/* clkgate needs to be enabled before writing other registers */
-	mxs_dma_clkgate(mxs_chan, 1);
-
 	/* set cmd_addr up */
 	writel(mxs_chan->ccw_phys,
 		mxs_dma->base + HW_APBHX_CHn_NXTCMDAR(chan_id));
@@ -178,9 +157,6 @@ static void mxs_dma_enable_chan(struct mxs_dma_chan *mxs_chan)
 
 static void mxs_dma_disable_chan(struct mxs_dma_chan *mxs_chan)
 {
-	/* disable apbh channel clock */
-	mxs_dma_clkgate(mxs_chan, 0);
-
 	mxs_chan->status = DMA_SUCCESS;
 }
 
@@ -268,7 +244,7 @@ static irqreturn_t mxs_dma_int_handler(int irq, void *dev_id)
 	/*
 	 * When both completion and error of termination bits set at the
 	 * same time, we do not take it as an error.  IOW, it only becomes
-	 * an error we need to handler here in case of ether it's (1) an bus
+	 * an error we need to handle here in case of either it's (1) a bus
 	 * error or (2) a termination error with no completion.
 	 */
 	stat2 = ((stat2 >> MXS_DMA_CHANNELS) & stat2) | /* (1) */
@@ -297,7 +273,7 @@ static irqreturn_t mxs_dma_int_handler(int irq, void *dev_id)
 		stat1 &= ~(1 << channel);
 
 		if (mxs_chan->status == DMA_SUCCESS)
-			mxs_chan->last_completed = mxs_chan->desc.cookie;
+			mxs_chan->chan.completed_cookie = mxs_chan->desc.cookie;
 
 		/* schedule tasklet on this channel */
 		tasklet_schedule(&mxs_chan->tasklet);
@@ -334,14 +310,11 @@ static int mxs_dma_alloc_chan_resources(struct dma_chan *chan)
 			goto err_irq;
 	}
 
-	ret = clk_enable(mxs_dma->clk);
+	ret = clk_prepare_enable(mxs_dma->clk);
 	if (ret)
 		goto err_clk;
 
-	/* clkgate needs to be enabled for reset to finish */
-	mxs_dma_clkgate(mxs_chan, 1);
 	mxs_dma_reset_chan(mxs_chan);
-	mxs_dma_clkgate(mxs_chan, 0);
 
 	dma_async_tx_descriptor_init(&mxs_chan->desc, chan);
 	mxs_chan->desc.tx_submit = mxs_dma_tx_submit;
@@ -372,7 +345,7 @@ static void mxs_dma_free_chan_resources(struct dma_chan *chan)
 	dma_free_coherent(mxs_dma->dma_device.dev, PAGE_SIZE,
 			mxs_chan->ccw, mxs_chan->ccw_phys);
 
-	clk_disable(mxs_dma->clk);
+	clk_disable_unprepare(mxs_dma->clk);
 }
 
 static struct dma_async_tx_descriptor *mxs_dma_prep_slave_sg(
@@ -386,7 +359,7 @@ static struct dma_async_tx_descriptor *mxs_dma_prep_slave_sg(
 	struct scatterlist *sg;
 	int i, j;
 	u32 *pio;
-	static int idx;
+	int idx = append ? mxs_chan->desc_count : 0;
 
 	if (mxs_chan->status == DMA_IN_PROGRESS && !append)
 		return NULL;
@@ -417,7 +390,7 @@ static struct dma_async_tx_descriptor *mxs_dma_prep_slave_sg(
 		idx = 0;
 	}
 
-	if (direction == DMA_NONE) {
+	if (direction == DMA_TRANS_NONE) {
 		ccw = &mxs_chan->ccw[idx++];
 		pio = (u32 *) sgl;
 
@@ -462,6 +435,7 @@ static struct dma_async_tx_descriptor *mxs_dma_prep_slave_sg(
 			}
 		}
 	}
+	mxs_chan->desc_count = idx;
 
 	return &mxs_chan->desc;
 
@@ -523,6 +497,7 @@ static struct dma_async_tx_descriptor *mxs_dma_prep_dma_cyclic(
 
 		i++;
 	}
+	mxs_chan->desc_count = i;
 
 	return &mxs_chan->desc;
 
@@ -539,8 +514,8 @@ static int mxs_dma_control(struct dma_chan *chan, enum dma_ctrl_cmd cmd,
 
 	switch (cmd) {
 	case DMA_TERMINATE_ALL:
-		mxs_dma_disable_chan(mxs_chan);
 		mxs_dma_reset_chan(mxs_chan);
+		mxs_dma_disable_chan(mxs_chan);
 		break;
 	case DMA_PAUSE:
 		mxs_dma_pause_chan(mxs_chan);
@@ -562,7 +537,7 @@ static enum dma_status mxs_dma_tx_status(struct dma_chan *chan,
 	dma_cookie_t last_used;
 
 	last_used = chan->cookie;
-	dma_set_tx_state(txstate, mxs_chan->last_completed, last_used, 0);
+	dma_set_tx_state(txstate, chan->completed_cookie, last_used, 0);
 
 	return mxs_chan->status;
 }
@@ -578,9 +553,9 @@ static int __init mxs_dma_init(struct mxs_dma_engine *mxs_dma)
 {
 	int ret;
 
-	ret = clk_enable(mxs_dma->clk);
+	ret = clk_prepare_enable(mxs_dma->clk);
 	if (ret)
-		goto err_out;
+		return ret;
 
 	ret = mxs_reset_block(mxs_dma->base);
 	if (ret)
@@ -604,11 +579,8 @@ static int __init mxs_dma_init(struct mxs_dma_engine *mxs_dma)
 	writel(MXS_DMA_CHANNELS_MASK << MXS_DMA_CHANNELS,
 		mxs_dma->base + HW_APBHX_CTRL1 + MXS_SET_ADDR);
 
-	clk_disable(mxs_dma->clk);
-
-	return 0;
-
 err_out:
+	clk_disable_unprepare(mxs_dma->clk);
 	return ret;
 }
 
