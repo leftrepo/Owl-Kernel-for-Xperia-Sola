@@ -29,6 +29,8 @@
 #include <mach/dma-v1.h>
 #include <mach/hardware.h>
 
+#include "dmaengine.h"
+
 struct imxdma_channel {
 	struct imxdma_engine		*imxdma;
 	unsigned int			channel;

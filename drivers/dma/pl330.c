@@ -20,6 +20,8 @@
 #include <linux/pm_runtime.h>
 #include <linux/scatterlist.h>
 
+#include "dmaengine.h"
+
 #define NR_DEFAULT_DESC	16
 
 enum desc_status {

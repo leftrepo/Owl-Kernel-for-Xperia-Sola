@@ -20,6 +20,7 @@
 
 #include <plat/ste_dma40.h>
 
+#include "dmaengine.h"
 #include "ste_dma40_ll.h"
 
 #ifdef CONFIG_STE_DMA40_DEBUG
