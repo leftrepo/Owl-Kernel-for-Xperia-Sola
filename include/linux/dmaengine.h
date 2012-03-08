@@ -454,6 +454,7 @@ struct dma_tx_state {
  * @device_prep_dma_cyclic: prepare a cyclic dma operation suitable for audio.
  *	The function takes a buffer of size buf_len. The callback function will
  *	be called after period_len bytes have been transferred.
+ * @device_prep_interleaved_dma: Transfer expression in a generic way.
  * @device_control: manipulate all pending operations on a channel, returns
  *	zero or error code
  * @device_tx_status: poll for transaction completion, the optional
@@ -514,10 +515,14 @@ struct dma_device {
 	struct dma_async_tx_descriptor *(*device_prep_slave_sg)(
 		struct dma_chan *chan, struct scatterlist *sgl,
 		unsigned int sg_len, enum dma_transfer_direction direction,
-		unsigned long flags);
+		unsigned long flags, void *context);
 	struct dma_async_tx_descriptor *(*device_prep_dma_cyclic)(
 		struct dma_chan *chan, dma_addr_t buf_addr, size_t buf_len,
-		size_t period_len, enum dma_transfer_direction direction);
+		size_t period_len, enum dma_transfer_direction direction,
+		void *context);
+	struct dma_async_tx_descriptor *(*device_prep_interleaved_dma)(
+		struct dma_chan *chan, struct dma_interleaved_template *xt,
+		unsigned long flags);
 	int (*device_control)(struct dma_chan *chan, enum dma_ctrl_cmd cmd,
 		unsigned long arg);
 
@@ -548,7 +553,24 @@ static inline struct dma_async_tx_descriptor *dmaengine_prep_slave_single(
 	struct scatterlist sg;
 	sg_init_one(&sg, buf, len);
 
-	return chan->device->device_prep_slave_sg(chan, &sg, 1, dir, flags);
+	return chan->device->device_prep_slave_sg(chan, &sg, 1,
+						  dir, flags, NULL);
+}
+
+static inline struct dma_async_tx_descriptor *dmaengine_prep_slave_sg(
+	struct dma_chan *chan, struct scatterlist *sgl,	unsigned int sg_len,
+	enum dma_transfer_direction dir, unsigned long flags)
+{
+	return chan->device->device_prep_slave_sg(chan, sgl, sg_len,
+						  dir, flags, NULL);
+}
+
+static inline struct dma_async_tx_descriptor *dmaengine_prep_dma_cyclic(
+		struct dma_chan *chan, dma_addr_t buf_addr, size_t buf_len,
+		size_t period_len, enum dma_transfer_direction dir)
+{
+	return chan->device->device_prep_dma_cyclic(chan, buf_addr, buf_len,
+						period_len, dir, NULL);
 }
 
 static inline int dmaengine_terminate_all(struct dma_chan *chan)
