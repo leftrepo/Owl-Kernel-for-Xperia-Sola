@@ -1707,7 +1707,7 @@ static void ab8500_fg_charge_state_to(struct ab8500_fg *di,
 }
 
 static void ab8500_fg_discharge_state_to(struct ab8500_fg *di,
-	enum ab8500_fg_charge_state new_state)
+	enum ab8500_fg_discharge_state new_state)
 {
 	if (di->discharge_state == new_state)
 		return;
