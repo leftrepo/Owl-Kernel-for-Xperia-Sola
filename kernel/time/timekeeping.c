@@ -183,24 +183,6 @@ static void timekeeping_update(bool clearntp)
 			 timekeeper.clock, timekeeper.mult);
 }
 
-
-void timekeeping_leap_insert(int leapsecond)
-{
-	unsigned long flags;
-
-	write_seqlock_irqsave(&timekeeper.lock, flags);
-	timekeeper.xtime.tv_sec += leapsecond;
-	timekeeper.wall_to_monotonic.tv_sec -= leapsecond;
-	timekeeping_update(false);
-	write_sequnlock_irqrestore(&timekeeper.lock, flags);
-
-}
-
-
-
-/* flag for if timekeeping is suspended */
-int __read_mostly timekeeping_suspended;
-
 /**
  * timekeeping_forward_now - update clock to the current time
  *
@@ -997,7 +979,8 @@ static cycle_t logarithmic_accumulation(cycle_t offset, int shift)
 		int leap;
 		timekeeper.xtime_nsec -= nsecps;
 		timekeeper.xtime.tv_sec++;
-		second_overflow();
+		leap = second_overflow(timekeeper.xtime.tv_sec);
+		timekeeper.xtime.tv_sec += leap;
 	}
 
 	/* Accumulate raw time */
@@ -1108,9 +1091,11 @@ static void update_wall_time(void)
 	 * xtime.tv_nsec isn't larger then NSEC_PER_SEC
 	 */
 	if (unlikely(timekeeper.xtime.tv_nsec >= NSEC_PER_SEC)) {
+		int leap;
 		timekeeper.xtime.tv_nsec -= NSEC_PER_SEC;
 		timekeeper.xtime.tv_sec++;
-		second_overflow();
+		leap = second_overflow(timekeeper.xtime.tv_sec);
+		timekeeper.xtime.tv_sec += leap;
 	}
 
 	timekeeping_update(false);
