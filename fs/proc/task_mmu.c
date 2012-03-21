@@ -394,20 +394,11 @@ static int smaps_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
 	pte_t *pte;
 	spinlock_t *ptl;
 
-	spin_lock(&walk->mm->page_table_lock);
-	if (pmd_trans_huge(*pmd)) {
-		if (pmd_trans_splitting(*pmd)) {
-			spin_unlock(&walk->mm->page_table_lock);
-			wait_split_huge_page(vma->anon_vma, pmd);
-		} else {
-			smaps_pte_entry(*(pte_t *)pmd, addr,
-					HPAGE_PMD_SIZE, walk);
-			spin_unlock(&walk->mm->page_table_lock);
-			mss->anonymous_thp += HPAGE_PMD_SIZE;
-			return 0;
-		}
-	} else {
+	if (pmd_trans_huge_lock(pmd, vma) == 1) {
+		smaps_pte_entry(*(pte_t *)pmd, addr, HPAGE_PMD_SIZE, walk);
 		spin_unlock(&walk->mm->page_table_lock);
+		mss->anonymous_thp += HPAGE_PMD_SIZE;
+		return 0;
 	}
 
 	if (pmd_trans_unstable(pmd))
@@ -608,6 +599,9 @@ struct pagemapread {
 	u64 *buffer;
 };
 
+#define PAGEMAP_WALK_SIZE	(PMD_SIZE)
+#define PAGEMAP_WALK_MASK	(PMD_MASK)
+
 #define PM_ENTRY_BYTES      sizeof(u64)
 #define PM_STATUS_BITS      3
 #define PM_STATUS_OFFSET    (64 - PM_STATUS_BITS)
@@ -666,6 +660,27 @@ static u64 pte_to_pagemap_entry(pte_t pte)
 	return pme;
 }
 
+#ifdef CONFIG_TRANSPARENT_HUGEPAGE
+static u64 thp_pmd_to_pagemap_entry(pmd_t pmd, int offset)
+{
+	u64 pme = 0;
+	/*
+	 * Currently pmd for thp is always present because thp can not be
+	 * swapped-out, migrated, or HWPOISONed (split in such cases instead.)
+	 * This if-check is just to prepare for future implementation.
+	 */
+	if (pmd_present(pmd))
+		pme = PM_PFRAME(pmd_pfn(pmd) + offset)
+			| PM_PSHIFT(PAGE_SHIFT) | PM_PRESENT;
+	return pme;
+}
+#else
+static inline u64 thp_pmd_to_pagemap_entry(pmd_t pmd, int offset)
+{
+	return 0;
+}
+#endif
+
 static int pagemap_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
 			     struct mm_walk *walk)
 {
@@ -673,15 +688,30 @@ static int pagemap_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
 	struct pagemapread *pm = walk->private;
 	pte_t *pte;
 	int err = 0;
+	u64 pfn = PM_NOT_PRESENT;
 
-	split_huge_page_pmd(walk->mm, pmd);
 	if (pmd_trans_unstable(pmd))
 		return 0;
 
 	/* find the first VMA at or above 'addr' */
 	vma = find_vma(walk->mm, addr);
+	spin_lock(&walk->mm->page_table_lock);
+	if (pmd_trans_huge_lock(pmd, vma) == 1) {
+		for (; addr != end; addr += PAGE_SIZE) {
+			unsigned long offset;
+
+			offset = (addr & ~PAGEMAP_WALK_MASK) >>
+					PAGE_SHIFT;
+			pfn = thp_pmd_to_pagemap_entry(*pmd, offset);
+			err = add_to_pagemap(addr, pfn, pm);
+			if (err)
+				break;
+		}
+		spin_unlock(&walk->mm->page_table_lock);
+		return err;
+	}
+
 	for (; addr != end; addr += PAGE_SIZE) {
-		u64 pfn = PM_NOT_PRESENT;
 
 		/* check to see if we've left 'vma' behind
 		 * and need a new, higher one */
@@ -764,8 +794,6 @@ static int pagemap_hugetlb_range(pte_t *pte, unsigned long hmask,
  * determine which areas of memory are actually mapped and llseek to
  * skip over unmapped regions.
  */
-#define PAGEMAP_WALK_SIZE	(PMD_SIZE)
-#define PAGEMAP_WALK_MASK	(PMD_MASK)
 static ssize_t pagemap_read(struct file *file, char __user *buf,
 			    size_t count, loff_t *ppos)
 {
@@ -948,24 +976,17 @@ static int gather_pte_stats(pmd_t *pmd, unsigned long addr,
 	pte_t *pte;
 
 	md = walk->private;
-	spin_lock(&walk->mm->page_table_lock);
-	if (pmd_trans_huge(*pmd)) {
-		if (pmd_trans_splitting(*pmd)) {
-			spin_unlock(&walk->mm->page_table_lock);
-			wait_split_huge_page(md->vma->anon_vma, pmd);
-		} else {
-			pte_t huge_pte = *(pte_t *)pmd;
-			struct page *page;
 
-			page = can_gather_numa_stats(huge_pte, md->vma, addr);
-			if (page)
-				gather_stats(page, md, pte_dirty(huge_pte),
-						HPAGE_PMD_SIZE/PAGE_SIZE);
-			spin_unlock(&walk->mm->page_table_lock);
-			return 0;
-		}
-	} else {
+	if (pmd_trans_huge_lock(pmd, md->vma) == 1) {
+		pte_t huge_pte = *(pte_t *)pmd;
+		struct page *page;
+
+		page = can_gather_numa_stats(huge_pte, md->vma, addr);
+		if (page)
+			gather_stats(page, md, pte_dirty(huge_pte),
+				     HPAGE_PMD_SIZE/PAGE_SIZE);
 		spin_unlock(&walk->mm->page_table_lock);
+		return 0;
 	}
 
 	if (pmd_trans_unstable(pmd))
