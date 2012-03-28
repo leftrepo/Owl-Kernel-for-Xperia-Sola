@@ -26,6 +26,12 @@
 #include <linux/platform_device.h>
 #include <linux/sched.h>
 
+<<<<<<< HEAD:arch/arm/mach-s5pc100/cpu.c
+=======
+#include <asm/irq.h>
+#include <asm/proc-fns.h>
+#include <asm/system_misc.h>
+>>>>>>> 9f97da7... Disintegrate asm/system.h for ARM:arch/arm/mach-s5pc100/common.c
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
 #include <asm/mach/irq.h>

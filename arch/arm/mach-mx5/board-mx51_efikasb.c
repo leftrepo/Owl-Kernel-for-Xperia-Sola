@@ -37,6 +37,7 @@
 
 #include <asm/irq.h>
 #include <asm/setup.h>
+#include <asm/system_info.h>
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/time.h>

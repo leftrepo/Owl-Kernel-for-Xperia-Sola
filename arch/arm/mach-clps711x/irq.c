@@ -24,6 +24,28 @@
 #include <asm/mach/irq.h>
 #include <mach/hardware.h>
 #include <asm/irq.h>
+<<<<<<< HEAD:arch/arm/mach-clps711x/irq.c
+=======
+#include <asm/leds.h>
+#include <asm/pgtable.h>
+#include <asm/page.h>
+#include <asm/mach/map.h>
+#include <asm/mach/time.h>
+#include <asm/hardware/clps7111.h>
+#include <asm/system_misc.h>
+
+/*
+ * This maps the generic CLPS711x registers
+ */
+static struct map_desc clps711x_io_desc[] __initdata = {
+	{
+		.virtual	= CLPS7111_VIRT_BASE,
+		.pfn		= __phys_to_pfn(CLPS7111_PHYS_BASE),
+		.length		= SZ_1M,
+		.type		= MT_DEVICE
+	}
+};
+>>>>>>> 9f97da7... Disintegrate asm/system.h for ARM:arch/arm/mach-clps711x/common.c
 
 #include <asm/hardware/clps7111.h>
 
