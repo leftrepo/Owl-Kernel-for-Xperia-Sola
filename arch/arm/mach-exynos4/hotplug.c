@@ -15,6 +15,10 @@
 #include <linux/smp.h>
 
 #include <asm/cacheflush.h>
+#include <asm/cp15.h>
+#include <asm/smp_plat.h>
+
+#include <mach/regs-pmu.h>
 
 extern volatile int pen_release;
 
