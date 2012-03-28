@@ -4,7 +4,6 @@
 #include <linux/cpu.h>
 #include <linux/cpumask.h>
 #include <linux/list.h>
-#include <asm/system.h>
 
 /*
  * stop_cpu[s]() is simplistic per-cpu maximum priority cpu

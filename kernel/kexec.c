@@ -38,7 +38,6 @@
 #include <asm/page.h>
 #include <asm/uaccess.h>
 #include <asm/io.h>
-#include <asm/system.h>
 #include <asm/sections.h>
 
 /* Per cpu memory for storing cpu states in case of system crash. */

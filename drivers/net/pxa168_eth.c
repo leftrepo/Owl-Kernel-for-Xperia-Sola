@@ -42,7 +42,6 @@
 #include <linux/io.h>
 #include <linux/types.h>
 #include <asm/pgtable.h>
-#include <asm/system.h>
 #include <asm/cacheflush.h>
 #include <linux/pxa168_eth.h>
 

@@ -19,7 +19,6 @@
 #include <linux/sysctl.h>
 #include <linux/slab.h>
 
-#include <asm/system.h>
 #include <asm/uaccess.h>
 
 #include "internal.h"

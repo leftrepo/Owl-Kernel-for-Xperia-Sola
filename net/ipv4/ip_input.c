@@ -113,7 +113,8 @@
  *		2 of the License, or (at your option) any later version.
  */
 
-#include <asm/system.h>
+#define pr_fmt(fmt) "IPv4: " fmt
+
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/kernel.h>

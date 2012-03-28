@@ -44,7 +44,6 @@
 #define atomic_set(v, i) (((v)->counter) = (i))
 
 #include <linux/irqflags.h>
-#include <asm/system.h>
 
 /**
  * atomic_add_return - add integer to atomic variable

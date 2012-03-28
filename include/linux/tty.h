@@ -14,8 +14,6 @@
 #include <linux/tty_ldisc.h>
 #include <linux/mutex.h>
 
-#include <asm/system.h>
-
 
 /*
  * (Note: the *_driver.minor_start values 1, 64, 128, 192 are

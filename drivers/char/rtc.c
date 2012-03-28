@@ -82,7 +82,6 @@
 #include <linux/uaccess.h>
 
 #include <asm/current.h>
-#include <asm/system.h>
 
 #ifdef CONFIG_X86
 #include <asm/hpet.h>

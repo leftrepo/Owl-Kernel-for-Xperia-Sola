@@ -77,7 +77,8 @@
  *		2 of the License, or (at your option) any later version.
  */
 
-#include <asm/system.h>
+#define pr_fmt(fmt) "UDP: " fmt
+
 #include <asm/uaccess.h>
 #include <asm/ioctls.h>
 #include <linux/bootmem.h>
