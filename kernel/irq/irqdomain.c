@@ -335,7 +335,8 @@ unsigned int irq_create_direct_mapping(struct irq_domain *domain)
 unsigned int irq_create_mapping(struct irq_domain *domain,
 				irq_hw_number_t hwirq)
 {
-	unsigned int virq, hint;
+	unsigned int hint;
+	int virq;
 
 	pr_debug("irq: irq_create_mapping(0x%p, 0x%lx)\n", domain, hwirq);
 
@@ -366,9 +367,9 @@ unsigned int irq_create_mapping(struct irq_domain *domain,
 	if (hint == 0)
 		hint++;
 	virq = irq_alloc_desc_from(hint, 0);
-	if (!virq)
+	if (virq <= 0)
 		virq = irq_alloc_desc_from(1, 0);
-	if (!virq) {
+	if (virq <= 0) {
 		pr_debug("irq: -> virq allocation failed\n");
 		return 0;
 	}
