@@ -2404,7 +2404,6 @@ static int pl022_runtime_suspend(struct device *dev)
 	struct pl022 *pl022 = dev_get_drvdata(dev);
 
 	clk_disable(pl022->clk);
-	amba_vcore_disable(pl022->adev);
 
 	return 0;
 }
@@ -2413,7 +2412,6 @@ static int pl022_runtime_resume(struct device *dev)
 {
 	struct pl022 *pl022 = dev_get_drvdata(dev);
 
-	amba_vcore_enable(pl022->adev);
 	clk_enable(pl022->clk);
 
 	return 0;
