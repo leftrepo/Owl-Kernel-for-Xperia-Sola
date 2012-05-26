@@ -317,9 +317,16 @@ void mmc_start_bkops(struct mmc_card *card)
 
 	spin_lock_irqsave(&card->host->lock, flags);
 	mmc_card_clr_need_bkops(card);
-	mmc_card_set_doing_bkops(card);
+
+	/*
+	 * For urgent bkops status (LEVEL_2 and more)
+	 * bkops executed synchronously, otherwise
+	 * the operation is in progress
+	 */
 	if (card->ext_csd.raw_bkops_status >= EXT_CSD_BKOPS_LEVEL_2)
 		mmc_card_set_check_bkops(card);
+	else
+		mmc_card_set_doing_bkops(card);
 
 	spin_unlock_irqrestore(&card->host->lock, flags);
 out:
@@ -2489,17 +2496,15 @@ int mmc_suspend_host(struct mmc_host *host)
 			if (!mmc_try_claim_host(host))
 				err = -EBUSY;
 
-		/*
-		 * A long response time is not acceptable for device drivers
-		 * when doing suspend. Prevent mmc_claim_host in the suspend
-		 * sequence, to potentially wait "forever" by trying to
-		 * pre-claim the host.
-		 */
-		if (mmc_try_claim_host(host)) {
+		if (!err) {
 			if (host->bus_ops->suspend) {
+				if (mmc_card_doing_bkops(host->card))
+					mmc_interrupt_bkops(host->card);
+
 				err = host->bus_ops->suspend(host);
 			}
-			mmc_release_host(host);
+			if (!(host->card && mmc_card_sdio(host->card)))
+				mmc_release_host(host);
 
 			if (err == -ENOSYS || !host->bus_ops->resume) {
 				/*
@@ -2516,13 +2521,7 @@ int mmc_suspend_host(struct mmc_host *host)
 				mmc_release_host(host);
 				host->pm_flags = 0;
 				err = 0;
-			} else if (mmc_card_mmc(host->card) ||
-				   mmc_card_sd(host->card)) {
-				host->pm_state |= MMC_HOST_DEFERRED_RESUME |
-						  MMC_HOST_NEEDS_RESUME;
 			}
-		} else {
-			err = -EBUSY;
 		}
 	}
 	mmc_bus_put(host);
