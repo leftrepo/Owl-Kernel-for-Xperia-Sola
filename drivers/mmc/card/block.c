@@ -65,6 +65,11 @@ MODULE_ALIAS("mmc:block");
 			(rq_data_dir(req) == WRITE))
 #define PACKED_CMD_VER		0x01
 #define PACKED_CMD_WR		0x02
+#define MMC_BLK_UPDATE_STOP_REASON(stats, reason)			\
+	do {								\
+		if (stats->enabled)					\
+			stats->pack_stop_reason[reason]++;		\
+	} while (0)
 
 static DEFINE_MUTEX(block_mutex);
 
@@ -115,23 +120,12 @@ struct mmc_blk_data {
 	unsigned int	part_curr;
 	struct device_attribute force_ro;
 	struct device_attribute power_ro_lock;
-	struct device_attribute power_ro_lock_legacy;
 	struct device_attribute num_wr_reqs_to_start_packing;
+	struct device_attribute min_sectors_to_check_bkops_status;
 	int	area_type;
 };
 
 static DEFINE_MUTEX(open_lock);
-
-enum mmc_blk_status {
-	MMC_BLK_SUCCESS = 0,
-	MMC_BLK_PARTIAL,
-	MMC_BLK_CMD_ERR,
-	MMC_BLK_RETRY,
-	MMC_BLK_ABORT,
-	MMC_BLK_DATA_ERR,
-	MMC_BLK_ECC_ERR,
-	MMC_BLK_NOMEDIUM,
-};
 
 enum {
 	MMC_PACKED_N_IDX = -1,
@@ -183,87 +177,6 @@ static void mmc_blk_put(struct mmc_blk_data *md)
 		kfree(md);
 	}
 	mutex_unlock(&open_lock);
-}
-
-#define EXT_CSD_BOOT_WP_PWR_WP_TEXT "pwr_ro"
-#define EXT_CSD_BOOT_WP_PERM_WP_TEXT "perm_ro"
-#define EXT_CSD_BOOT_WP_WP_DISABLED_TEXT "rw"
-static ssize_t boot_partition_ro_lock_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
-{
-	int ret;
-	struct mmc_blk_data *md = mmc_blk_get(dev_to_disk(dev));
-	struct mmc_card *card = md->queue.card;
-	const char *out_text;
-
-	if (card->ext_csd.boot_ro_lock
-			& EXT_CSD_BOOT_WP_B_PERM_WP_EN)
-		out_text = EXT_CSD_BOOT_WP_PERM_WP_TEXT;
-	else if (card->ext_csd.boot_ro_lock
-			& EXT_CSD_BOOT_WP_B_PWR_WP_EN)
-		out_text = EXT_CSD_BOOT_WP_PWR_WP_TEXT;
-	else
-		out_text = EXT_CSD_BOOT_WP_WP_DISABLED_TEXT;
-
-	ret = snprintf(buf, PAGE_SIZE, "%s\n", out_text);
-
-	return ret;
-}
-
-static ssize_t boot_partition_ro_lock_store(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count)
-{
-	int ret;
-	struct mmc_blk_data *md, *part_md;
-	struct mmc_card *card;
-	u8 set = 0;
-
-	md = mmc_blk_get(dev_to_disk(dev));
-	card = md->queue.card;
-
-	if (!strncmp(buf, EXT_CSD_BOOT_WP_PWR_WP_TEXT,
-				strlen(EXT_CSD_BOOT_WP_PWR_WP_TEXT)))
-		set = EXT_CSD_BOOT_WP_B_PWR_WP_EN;
-	else if (!strncmp(buf, EXT_CSD_BOOT_WP_PERM_WP_TEXT,
-				strlen(EXT_CSD_BOOT_WP_PERM_WP_TEXT)))
-		set = EXT_CSD_BOOT_WP_B_PERM_WP_EN;
-
-	if (set) {
-		mmc_claim_host(card->host);
-
-		ret = mmc_switch(card, EXT_CSD_CMD_SET_NORMAL,
-				EXT_CSD_BOOT_WP,
-				set,
-				card->ext_csd.part_time);
-		if (ret)
-			pr_err("Boot Partition Lock failed: %d", ret);
-		else
-			card->ext_csd.boot_ro_lock = set;
-
-		mmc_release_host(card->host);
-
-		if (!ret) {
-			pr_info("%s: Locking boot partition "
-					"%s",
-					md->disk->disk_name,
-					buf);
-			set_disk_ro(md->disk, 1);
-
-			list_for_each_entry(part_md, &md->part, part)
-				if (part_md->area_type ==
-						MMC_BLK_DATA_AREA_BOOT) {
-					pr_info("%s: Locking boot partition "
-						"%s",
-						part_md->disk->disk_name,
-						buf);
-					set_disk_ro(part_md->disk, 1);
-				}
-		}
-	}
-	ret = count;
-
-	mmc_blk_put(md);
-	return ret;
 }
 
 static ssize_t power_ro_lock_show(struct device *dev,
@@ -389,6 +302,48 @@ num_wr_reqs_to_start_packing_store(struct device *dev,
 	sscanf(buf, "%d", &value);
 	if (value >= 0)
 		md->queue.num_wr_reqs_to_start_packing = value;
+
+	mmc_blk_put(md);
+	return count;
+}
+
+static ssize_t
+min_sectors_to_check_bkops_status_show(struct device *dev,
+				  struct device_attribute *attr, char *buf)
+{
+	struct mmc_blk_data *md = mmc_blk_get(dev_to_disk(dev));
+	unsigned int min_sectors_to_check_bkops_status;
+	struct mmc_card *card = md->queue.card;
+	int ret;
+
+	if (!card)
+		return -EINVAL;
+
+	min_sectors_to_check_bkops_status =
+		card->bkops_info.min_sectors_to_queue_delayed_work;
+
+	ret = snprintf(buf, PAGE_SIZE, "%d\n",
+		       min_sectors_to_check_bkops_status);
+
+	mmc_blk_put(md);
+	return ret;
+}
+
+static ssize_t
+min_sectors_to_check_bkops_status_store(struct device *dev,
+				 struct device_attribute *attr,
+				 const char *buf, size_t count)
+{
+	int value;
+	struct mmc_blk_data *md = mmc_blk_get(dev_to_disk(dev));
+	struct mmc_card *card = md->queue.card;
+
+	if (!card)
+		return -EINVAL;
+
+	sscanf(buf, "%d", &value);
+	if (value >= 0)
+		card->bkops_info.min_sectors_to_queue_delayed_work = value;
 
 	mmc_blk_put(md);
 	return count;
@@ -961,6 +916,9 @@ static int mmc_blk_issue_discard_rq(struct mmc_queue *mq, struct request *req)
 	from = blk_rq_pos(req);
 	nr = blk_rq_sectors(req);
 
+	if (card->ext_csd.bkops_en)
+		card->bkops_info.sectors_changed += blk_rq_sectors(req);
+
 	if (mmc_can_discard(card))
 		arg = MMC_DISCARD_ARG;
 	else if (mmc_can_trim(card))
@@ -984,9 +942,7 @@ out:
 		goto retry;
 	if (!err)
 		mmc_blk_reset_success(md, type);
-	spin_lock_irq(&md->lock);
-	__blk_end_request(req, err, blk_rq_bytes(req));
-	spin_unlock_irq(&md->lock);
+	blk_end_request(req, err, blk_rq_bytes(req));
 
 	return err ? 0 : 1;
 }
@@ -1055,9 +1011,7 @@ out_retry:
 	if (!err)
 		mmc_blk_reset_success(md, type);
 out:
-	spin_lock_irq(&md->lock);
-	__blk_end_request(req, err, blk_rq_bytes(req));
-	spin_unlock_irq(&md->lock);
+	blk_end_request(req, err, blk_rq_bytes(req));
 
 	return err ? 0 : 1;
 }
@@ -1096,9 +1050,7 @@ static int mmc_blk_issue_sanitize_rq(struct mmc_queue *mq,
 					     __func__);
 
 out:
-	spin_lock_irq(&md->lock);
-	__blk_end_request(req, err, blk_rq_bytes(req));
-	spin_unlock_irq(&md->lock);
+	blk_end_request(req, err, blk_rq_bytes(req));
 
 	return err ? 0 : 1;
 }
@@ -1113,9 +1065,7 @@ static int mmc_blk_issue_flush(struct mmc_queue *mq, struct request *req)
 	if (ret)
 		ret = -EIO;
 
-	spin_lock_irq(&md->lock);
-	__blk_end_request_all(req, ret);
-	spin_unlock_irq(&md->lock);
+	blk_end_request_all(req, ret);
 
 	return ret ? 0 : 1;
 }
@@ -1442,7 +1392,10 @@ static void mmc_blk_rw_rq_prep(struct mmc_queue_req *mqrq,
 	}
 
 	mqrq->mmc_active.mrq = &brq->mrq;
-	mqrq->mmc_active.err_check = mmc_blk_err_check;
+	if (mq->err_check_fn)
+		mqrq->mmc_active.err_check = mq->err_check_fn;
+	else
+		mqrq->mmc_active.err_check = mmc_blk_err_check;
 
 	mmc_queue_bounce_pre(mqrq);
 }
@@ -1470,6 +1423,7 @@ static void mmc_blk_write_packing_control(struct mmc_queue *mq,
 		if (mq->num_of_potential_packed_wr_reqs >
 				mq->num_wr_reqs_to_start_packing)
 			mq->wr_packing_enabled = true;
+		mq->num_of_potential_packed_wr_reqs = 0;
 		return;
 	}
 
@@ -1489,6 +1443,93 @@ static void mmc_blk_write_packing_control(struct mmc_queue *mq,
 
 }
 
+struct mmc_wr_pack_stats *mmc_blk_get_packed_statistics(struct mmc_card *card)
+{
+	if (!card)
+		return NULL;
+
+	return &card->wr_pack_stats;
+}
+EXPORT_SYMBOL(mmc_blk_get_packed_statistics);
+
+void mmc_blk_init_packed_statistics(struct mmc_card *card)
+{
+	int max_num_of_packed_reqs = 0;
+
+	if (!card || !card->wr_pack_stats.packing_events)
+		return;
+
+	max_num_of_packed_reqs = card->ext_csd.max_packed_writes;
+
+	spin_lock(&card->wr_pack_stats.lock);
+	memset(card->wr_pack_stats.packing_events, 0,
+		(max_num_of_packed_reqs + 1) *
+	       sizeof(*card->wr_pack_stats.packing_events));
+	memset(&card->wr_pack_stats.pack_stop_reason, 0,
+		sizeof(card->wr_pack_stats.pack_stop_reason));
+	card->wr_pack_stats.enabled = true;
+	spin_unlock(&card->wr_pack_stats.lock);
+}
+EXPORT_SYMBOL(mmc_blk_init_packed_statistics);
+
+void print_mmc_packing_stats(struct mmc_card *card)
+{
+	int i;
+	int max_num_of_packed_reqs = 0;
+
+	if ((!card) || (!card->wr_pack_stats.packing_events))
+		return;
+
+	max_num_of_packed_reqs = card->ext_csd.max_packed_writes;
+
+	spin_lock(&card->wr_pack_stats.lock);
+
+	pr_info("%s: write packing statistics:\n",
+		mmc_hostname(card->host));
+
+	for (i = 1 ; i <= max_num_of_packed_reqs ; ++i) {
+		if (card->wr_pack_stats.packing_events[i] != 0)
+			pr_info("%s: Packed %d reqs - %d times\n",
+				mmc_hostname(card->host), i,
+				card->wr_pack_stats.packing_events[i]);
+	}
+
+	pr_info("%s: stopped packing due to the following reasons:\n",
+		mmc_hostname(card->host));
+
+	if (card->wr_pack_stats.pack_stop_reason[EXCEEDS_SEGMENTS])
+		pr_info("%s: %d times: exceedmax num of segments\n",
+			mmc_hostname(card->host),
+			card->wr_pack_stats.pack_stop_reason[EXCEEDS_SEGMENTS]);
+	if (card->wr_pack_stats.pack_stop_reason[EXCEEDS_SECTORS])
+		pr_info("%s: %d times: exceeding the max num of sectors\n",
+			mmc_hostname(card->host),
+			card->wr_pack_stats.pack_stop_reason[EXCEEDS_SECTORS]);
+	if (card->wr_pack_stats.pack_stop_reason[WRONG_DATA_DIR])
+		pr_info("%s: %d times: wrong data direction\n",
+			mmc_hostname(card->host),
+			card->wr_pack_stats.pack_stop_reason[WRONG_DATA_DIR]);
+	if (card->wr_pack_stats.pack_stop_reason[FLUSH_OR_DISCARD])
+		pr_info("%s: %d times: flush or discard\n",
+			mmc_hostname(card->host),
+			card->wr_pack_stats.pack_stop_reason[FLUSH_OR_DISCARD]);
+	if (card->wr_pack_stats.pack_stop_reason[EMPTY_QUEUE])
+		pr_info("%s: %d times: empty queue\n",
+			mmc_hostname(card->host),
+			card->wr_pack_stats.pack_stop_reason[EMPTY_QUEUE]);
+	if (card->wr_pack_stats.pack_stop_reason[REL_WRITE])
+		pr_info("%s: %d times: rel write\n",
+			mmc_hostname(card->host),
+			card->wr_pack_stats.pack_stop_reason[REL_WRITE]);
+	if (card->wr_pack_stats.pack_stop_reason[THRESHOLD])
+		pr_info("%s: %d times: Threshold\n",
+			mmc_hostname(card->host),
+			card->wr_pack_stats.pack_stop_reason[THRESHOLD]);
+
+	spin_unlock(&card->wr_pack_stats.lock);
+}
+EXPORT_SYMBOL(print_mmc_packing_stats);
+
 static u8 mmc_blk_prep_packed_list(struct mmc_queue *mq, struct request *req)
 {
 	struct request_queue *q = mq->queue;
@@ -1501,6 +1542,7 @@ static u8 mmc_blk_prep_packed_list(struct mmc_queue *mq, struct request *req)
 	u8 put_back = 0;
 	u8 max_packed_rw = 0;
 	u8 reqs = 0;
+	struct mmc_wr_pack_stats *stats = &card->wr_pack_stats;
 
 	mmc_blk_clear_packed(mq->mqrq_cur);
 
@@ -1541,26 +1583,33 @@ static u8 mmc_blk_prep_packed_list(struct mmc_queue *mq, struct request *req)
 		phys_segments++;
 	}
 
+	spin_lock(&stats->lock);
+
 	while (reqs < max_packed_rw - 1) {
 		spin_lock_irq(q->queue_lock);
 		next = blk_fetch_request(q);
 		spin_unlock_irq(q->queue_lock);
-		if (!next)
+		if (!next) {
+			MMC_BLK_UPDATE_STOP_REASON(stats, EMPTY_QUEUE);
 			break;
+		}
 
 		if (mmc_large_sec(card) &&
 				!IS_ALIGNED(blk_rq_sectors(next), 8)) {
+			MMC_BLK_UPDATE_STOP_REASON(stats, LARGE_SEC_ALIGN);
 			put_back = 1;
 			break;
 		}
 
 		if (next->cmd_flags & REQ_DISCARD ||
 				next->cmd_flags & REQ_FLUSH) {
+			MMC_BLK_UPDATE_STOP_REASON(stats, FLUSH_OR_DISCARD);
 			put_back = 1;
 			break;
 		}
 
 		if (rq_data_dir(cur) != rq_data_dir(next)) {
+			MMC_BLK_UPDATE_STOP_REASON(stats, WRONG_DATA_DIR);
 			put_back = 1;
 			break;
 		}
@@ -1568,24 +1617,32 @@ static u8 mmc_blk_prep_packed_list(struct mmc_queue *mq, struct request *req)
 		if (mmc_req_rel_wr(next) &&
 				(md->flags & MMC_BLK_REL_WR) &&
 				!en_rel_wr) {
+			MMC_BLK_UPDATE_STOP_REASON(stats, REL_WRITE);
 			put_back = 1;
 			break;
 		}
 
 		req_sectors += blk_rq_sectors(next);
 		if (req_sectors > max_blk_count) {
+			if (stats->enabled)
+				stats->pack_stop_reason[EXCEEDS_SECTORS]++;
 			put_back = 1;
 			break;
 		}
 
 		phys_segments +=  next->nr_phys_segments;
 		if (phys_segments > max_phys_segs) {
+			MMC_BLK_UPDATE_STOP_REASON(stats, EXCEEDS_SEGMENTS);
 			put_back = 1;
 			break;
 		}
 
-		if (rq_data_dir(next) == WRITE)
+		if (rq_data_dir(next) == WRITE) {
 			mq->num_of_potential_packed_wr_reqs++;
+			if (card->ext_csd.bkops_en)
+				card->bkops_info.sectors_changed +=
+					blk_rq_sectors(next);
+		}
 		list_add_tail(&next->queuelist, &mq->mqrq_cur->packed_list);
 		cur = next;
 		reqs++;
@@ -1596,6 +1653,15 @@ static u8 mmc_blk_prep_packed_list(struct mmc_queue *mq, struct request *req)
 		blk_requeue_request(q, next);
 		spin_unlock_irq(q->queue_lock);
 	}
+
+	if (stats->enabled) {
+		if (reqs + 1 <= card->ext_csd.max_packed_writes)
+			stats->packing_events[reqs + 1]++;
+		if (reqs + 1 == max_packed_rw)
+			MMC_BLK_UPDATE_STOP_REASON(stats, THRESHOLD);
+	}
+
+	spin_unlock(&stats->lock);
 
 	if (reqs > 0) {
 		list_add(&req->queuelist, &mq->mqrq_cur->packed_list);
@@ -1671,6 +1737,7 @@ static void mmc_blk_packed_hdr_wrq_prep(struct mmc_queue_req *mqrq,
 	brq->data.blksz = 512;
 	brq->data.blocks = mqrq->packed_blocks + 1;
 	brq->data.flags |= MMC_DATA_WRITE;
+	brq->data.fault_injected = false;
 
 	brq->stop.opcode = MMC_STOP_TRANSMISSION;
 	brq->stop.arg = 0;
@@ -1682,7 +1749,18 @@ static void mmc_blk_packed_hdr_wrq_prep(struct mmc_queue_req *mqrq,
 	brq->data.sg_len = mmc_queue_map_sg(mq, mqrq);
 
 	mqrq->mmc_active.mrq = &brq->mrq;
-	mqrq->mmc_active.err_check = mmc_blk_packed_err_check;
+
+	/*
+	 * This is intended for packed commands tests usage - in case these
+	 * functions are not in use the respective pointers are NULL
+	 */
+	if (mq->err_check_fn)
+		mqrq->mmc_active.err_check = mq->err_check_fn;
+	else
+		mqrq->mmc_active.err_check = mmc_blk_packed_err_check;
+
+	if (mq->packed_test_fn)
+		mq->packed_test_fn(mq->queue, mqrq);
 
 	mmc_queue_bounce_pre(mqrq);
 }
@@ -1795,8 +1873,11 @@ static int mmc_blk_issue_rw_rq(struct mmc_queue *mq, struct request *rqc)
 	if (!rqc && !mq->mqrq_prev->req)
 		return 0;
 
-	if (rqc)
+	if (rqc) {
+		if ((card->ext_csd.bkops_en) && (rq_data_dir(rqc) == WRITE))
+			card->bkops_info.sectors_changed += blk_rq_sectors(rqc);
 		reqs = mmc_blk_prep_packed_list(mq, rqc);
+	}
 
 	do {
 		if (rqc) {
@@ -1884,10 +1965,8 @@ static int mmc_blk_issue_rw_rq(struct mmc_queue *mq, struct request *rqc)
 			 * time, so we only reach here after trying to
 			 * read a single sector.
 			 */
-			spin_lock_irq(&md->lock);
-			ret = __blk_end_request(req, -EIO,
+			ret = blk_end_request(req, -EIO,
 						brq->data.blksz);
-			spin_unlock_irq(&md->lock);
 			if (!ret)
 				goto start_new_req;
 			break;
@@ -1963,9 +2042,7 @@ static int mmc_blk_issue_rq(struct mmc_queue *mq, struct request *req)
 	ret = mmc_blk_part_switch(card, md);
 	if (ret) {
 		if (req) {
-			spin_lock_irq(&md->lock);
-			__blk_end_request_all(req, -EIO);
-			spin_unlock_irq(&md->lock);
+			blk_end_request_all(req, -EIO);
 		}
 		ret = 0;
 		goto out;
@@ -2271,19 +2348,6 @@ static int mmc_add_disk(struct mmc_blk_data *md)
 				&md->power_ro_lock);
 		if (ret)
 			goto power_ro_lock_fail;
-
-		/* Legacy mode */
-		mode = S_IRUGO | S_IWUSR;
-
-		md->power_ro_lock_legacy.show = boot_partition_ro_lock_show;
-		md->power_ro_lock_legacy.store = boot_partition_ro_lock_store;
-		sysfs_attr_init(&md->power_ro_lock_legacy.attr);
-		md->power_ro_lock_legacy.attr.mode = mode;
-		md->power_ro_lock_legacy.attr.name = "ro_lock";
-		ret = device_create_file(disk_to_dev(md->disk),
-				&md->power_ro_lock_legacy);
-		if (ret)
-			goto power_ro_lock_fail_legacy;
 	}
 
 	md->num_wr_reqs_to_start_packing.show =
@@ -2297,16 +2361,32 @@ static int mmc_add_disk(struct mmc_blk_data *md)
 	ret = device_create_file(disk_to_dev(md->disk),
 				 &md->num_wr_reqs_to_start_packing);
 	if (ret)
-		goto power_ro_lock_fail;
+		goto num_wr_reqs_to_start_packing_fail;
+
+	md->min_sectors_to_check_bkops_status.show =
+		min_sectors_to_check_bkops_status_show;
+	md->min_sectors_to_check_bkops_status.store =
+		min_sectors_to_check_bkops_status_store;
+	sysfs_attr_init(&md->min_sectors_to_check_bkops_status.attr);
+	md->min_sectors_to_check_bkops_status.attr.name =
+		"min_sectors_to_check_bkops_status";
+	md->min_sectors_to_check_bkops_status.attr.mode = S_IRUGO | S_IWUSR;
+	ret = device_create_file(disk_to_dev(md->disk),
+				 &md->min_sectors_to_check_bkops_status);
+	if (ret)
+		goto min_sectors_to_check_bkops_status_fails;
 
 	return ret;
 
-power_ro_lock_fail_legacy:
+min_sectors_to_check_bkops_status_fails:
+	device_remove_file(disk_to_dev(md->disk),
+			   &md->num_wr_reqs_to_start_packing);
+num_wr_reqs_to_start_packing_fail:
 	device_remove_file(disk_to_dev(md->disk), &md->power_ro_lock);
 power_ro_lock_fail:
-		device_remove_file(disk_to_dev(md->disk), &md->force_ro);
+	device_remove_file(disk_to_dev(md->disk), &md->force_ro);
 force_ro_fail:
-		del_gendisk(md->disk);
+	del_gendisk(md->disk);
 
 	return ret;
 }
