@@ -57,8 +57,10 @@ static DEFINE_MUTEX(dpm_list_mtx);
 static pm_message_t pm_transition;
 
 static void dpm_drv_timeout(unsigned long data);
-static void __dpm_drv_timeout(unsigned long data);
-static void (*dpm_drv_timeout_fun)(unsigned long data) = __dpm_drv_timeout;
+struct dpm_drv_wd_data {
+	struct device *dev;
+	struct task_struct *tsk;
+};
 
 static int async_error;
 
@@ -670,14 +672,6 @@ static bool is_async(struct device *dev)
  */
 static void dpm_drv_timeout(unsigned long data)
 {
-	dpm_drv_timeout_fun(data);
-}
-
-/**
- * Default dpm_drv_timeout. Change using device_pm_set_timout_handler.
- */
-static void __dpm_drv_timeout(unsigned long data)
-{
 	struct dpm_drv_wd_data *wd_data = (void *)data;
 	struct device *dev = wd_data->dev;
 	struct task_struct *tsk = wd_data->tsk;
@@ -1098,19 +1092,8 @@ static int __device_suspend(struct device *dev, pm_message_t state, bool async)
 
 	dpm_wait_for_children(dev, async);
 
-	data.dev = dev;
-	data.tsk = get_current();
-	init_timer_on_stack(&timer);
-	timer.expires = jiffies + HZ * 3;
-	timer.function = dpm_drv_timeout;
-	timer.data = (unsigned long)&data;
-	add_timer(&timer);
-
-	if (async_error) {
-		del_timer_sync(&timer);
-		destroy_timer_on_stack(&timer);
-		return 0;
-	}
+	if (async_error)
+		goto Complete;
 
 	/*
 	 * If a device configured to wake up the system from sleep states
@@ -1123,8 +1106,16 @@ static int __device_suspend(struct device *dev, pm_message_t state, bool async)
 
 	if (pm_wakeup_pending()) {
 		async_error = -EBUSY;
-		return 0;
+		goto Complete;
 	}
+
+	data.dev = dev;
+	data.tsk = get_current();
+	init_timer_on_stack(&timer);
+	timer.expires = jiffies + HZ * 12;
+	timer.function = dpm_drv_timeout;
+	timer.data = (unsigned long)&data;
+	add_timer(&timer);
 
 	device_lock(dev);
 
@@ -1184,6 +1175,7 @@ static int __device_suspend(struct device *dev, pm_message_t state, bool async)
 	del_timer_sync(&timer);
 	destroy_timer_on_stack(&timer);
 
+ Complete:
 	complete_all(&dev->power.completion);
 
 	if (error)
