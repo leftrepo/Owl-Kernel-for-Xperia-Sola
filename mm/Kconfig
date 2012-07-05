@@ -129,6 +129,7 @@ config SPARSEMEM_VMEMMAP
 	 efficient option when sufficient kernel resources are available.
 
 config NO_BOOTMEM
+	boolean
 
 config HAVE_MEMBLOCK
 	boolean

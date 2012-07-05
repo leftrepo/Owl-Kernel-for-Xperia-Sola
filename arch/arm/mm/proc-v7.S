@@ -160,6 +160,7 @@ __v7_ca5mp_setup:
 __v7_ca9mp_setup:
 	mov	r10, #(1 << 0)			@ TLB ops broadcasting
 	b	1f
+__v7_ca7mp_setup:
 __v7_ca15mp_setup:
 	mov	r10, #0
 1:
