@@ -29,10 +29,6 @@
 
 void __iomem *_PRCMU_BASE;
 
-#ifdef CONFIG_CACHE_L2X0
-static void __iomem *l2x0_base;
-#endif
-
 void __init ux500_init_devices(void)
 {
 #ifdef CONFIG_CACHE_L2X0
@@ -184,11 +180,11 @@ int __init ux500_l2x0_init(void)
 		(0x4 << L2X0_AUX_CTRL_WAY_SIZE_SHIFT); /* 128KB way size */
 	else
 		aux_val |=
-		(0x3 << L2X0_AUX_CTRL_WAY_SIZE_SHIFT); /* 64KB way size */
+		(0x3 << L2X0_AUX_CTRL_WAY_SIZE_SHIFT) | \
+		(0x1 << L2X0_AUX_CTRL_L2_FORCE_NWA_SHIFT); /* 64KB way size */
 
-	/* 8 way associativity, force WA */
+	/* 8 way associativity, force NWA */
 	l2x0_init(l2x0_base, aux_val, 0xc0000fff);
-
 	/* Override invalidate function */
 	outer_cache.disable = ux500_l2x0_disable;
 	outer_cache.inv_all = ux500_l2x0_inv_all;

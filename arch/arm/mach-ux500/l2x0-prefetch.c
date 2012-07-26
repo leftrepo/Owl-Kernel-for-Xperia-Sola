@@ -14,7 +14,6 @@
 
 static struct tee_session session;
 static struct tee_context context;
-static void __iomem *l2x0_base;
 
 #define L2X0_PREFETCH_CTRL_REG (0x00000F60)
 #define L2X0_PREFETCH_CTRL_BIT_DATA_EN (1 << 28)
@@ -40,8 +39,10 @@ static void prefetch_enable(void)
 	if (!(data & L2X0_PREFETCH_CTRL_BIT_INST_EN) ||
 		!(data & L2X0_PREFETCH_CTRL_BIT_DATA_EN)) {
 
-		data |= (L2X0_PREFETCH_CTRL_BIT_INST_EN |
-				L2X0_PREFETCH_CTRL_BIT_DATA_EN);
+		data |= (L2X0_PREFETCH_CTRL_BIT_INST_EN | \
+				L2X0_PREFETCH_CTRL_BIT_DATA_EN | \
+				L2X0_PREFETCH_CTRL_WRAP8_INC_SHIFT | \
+				L2X0_PREFETCH_CTRL_WRAP8_SHIFT);
 
 		operation.shm[0].buffer = &data;
 		operation.shm[0].size = sizeof(data);
