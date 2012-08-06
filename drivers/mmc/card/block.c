@@ -2198,6 +2198,8 @@ static struct mmc_blk_data *mmc_blk_alloc_req(struct mmc_card *card,
 	md->disk->driverfs_dev = parent;
 	set_disk_ro(md->disk, md->read_only || default_ro);
 	md->disk->flags = GENHD_FL_EXT_DEVT;
+	if (area_type & MMC_BLK_DATA_AREA_RPMB)
+		md->disk->flags |= GENHD_FL_NO_PART_SCAN;
 
 	/*
 	 * As discussed on lkml, GENHD_FL_REMOVABLE should:
@@ -2332,9 +2334,12 @@ static void mmc_blk_remove_req(struct mmc_blk_data *md)
 		if (md->disk->flags & GENHD_FL_UP) {
 			device_remove_file(disk_to_dev(md->disk), &md->force_ro);
 			if ((md->area_type & MMC_BLK_DATA_AREA_BOOT) &&
-					card->ext_csd.boot_ro_lockable)
+					card->ext_csd.boot_ro_lockable) {
 				device_remove_file(disk_to_dev(md->disk),
 					&md->power_ro_lock);
+				device_remove_file(disk_to_dev(md->disk),
+					&md->power_ro_lock_legacy);
+			}
 
 			/* Stop new requests from getting into the queue */
 			del_gendisk(md->disk);
@@ -2364,7 +2369,6 @@ static int mmc_add_disk(struct mmc_blk_data *md)
 {
 	int ret;
 	struct mmc_card *card = md->queue.card;
-	umode_t mode;
 
 	add_disk(md->disk);
 	md->force_ro.show = force_ro_show;
@@ -2395,6 +2399,19 @@ static int mmc_add_disk(struct mmc_blk_data *md)
 				&md->power_ro_lock);
 		if (ret)
 			goto power_ro_lock_fail;
+
+		/* Legacy mode */
+		mode = S_IRUGO | S_IWUSR;
+
+		md->power_ro_lock_legacy.show = boot_partition_ro_lock_show;
+		md->power_ro_lock_legacy.store = boot_partition_ro_lock_store;
+		sysfs_attr_init(&md->power_ro_lock_legacy.attr);
+		md->power_ro_lock_legacy.attr.mode = mode;
+		md->power_ro_lock_legacy.attr.name = "ro_lock";
+		ret = device_create_file(disk_to_dev(md->disk),
+				&md->power_ro_lock_legacy);
+		if (ret)
+			goto power_ro_lock_fail_legacy;
 	}
 
 	md->num_wr_reqs_to_start_packing.show =
@@ -2423,18 +2440,6 @@ static int mmc_add_disk(struct mmc_blk_data *md)
 	if (ret)
 		goto min_sectors_to_check_bkops_status_fails;
 
-		/* Legacy mode */
-		mode = S_IRUGO | S_IWUSR;
-
-		md->power_ro_lock_legacy.show = boot_partition_ro_lock_show;
-		md->power_ro_lock_legacy.store = boot_partition_ro_lock_store;
-		sysfs_attr_init(&md->power_ro_lock_legacy.attr);
-		md->power_ro_lock_legacy.attr.mode = mode;
-		md->power_ro_lock_legacy.attr.name = "ro_lock";
-		ret = device_create_file(disk_to_dev(md->disk),
-				&md->power_ro_lock_legacy);
-		if (ret)
-			goto power_ro_lock_fail_legacy;
 	return ret;
 
 min_sectors_to_check_bkops_status_fails:
