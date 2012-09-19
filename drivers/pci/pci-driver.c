@@ -638,8 +638,6 @@ static void pci_pm_complete(struct device *dev)
 
 	if (drv && drv->pm && drv->pm->complete)
 		drv->pm->complete(dev);
-
-	pm_runtime_put_sync(dev);
 }
 
 #else /* !CONFIG_PM_SLEEP */
