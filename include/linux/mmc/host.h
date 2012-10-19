@@ -249,10 +249,6 @@ struct mmc_host {
 #define MMC_CAP2_POWER_OFF_VCCQ_DURING_SUSPEND	(1 << 16)
 
 	mmc_pm_flag_t		pm_caps;	/* supported pm features */
-	unsigned int        power_notify_type;
-#define MMC_HOST_PW_NOTIFY_NONE		0
-#define MMC_HOST_PW_NOTIFY_SHORT	1
-#define MMC_HOST_PW_NOTIFY_LONG		2
 
 #ifdef CONFIG_MMC_CLKGATE
 	int			clk_requests;	/* internal reference counter */
