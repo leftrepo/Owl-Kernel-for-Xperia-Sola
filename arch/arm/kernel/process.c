@@ -248,24 +248,10 @@ void cpu_idle(void)
 
 	/* endless idle loop with no priority at all */
 	while (1) {
+		idle_notifier_call_chain(IDLE_START);
 		tick_nohz_idle_enter();
 		rcu_idle_enter();
-		idle_notifier_call_chain(IDLE_START);
 		while (!need_resched()) {
-#ifdef CONFIG_HOTPLUG_CPU
-			if (cpu_is_offline(smp_processor_id())) {
-
-				/* NOTE : preempt_count() should be 0 for dying CPU
-				*        as the CPU will use this very thread when
-				*        it is alive
-				*/
-				if (preempt_count())
-					preempt_enable_no_resched();
-
-				cpu_die();
-			}
-#endif
-
 			/*
 			 * We need to disable interrupts here
 			 * to ensure we don't miss a wakeup call.
@@ -290,10 +276,14 @@ void cpu_idle(void)
 			} else
 				local_irq_enable();
 		}
-		idle_notifier_call_chain(IDLE_END);
 		rcu_idle_exit();
 		tick_nohz_idle_exit();
+		idle_notifier_call_chain(IDLE_END);
 		schedule_preempt_disabled();
+#ifdef CONFIG_HOTPLUG_CPU
+		if (cpu_is_offline(smp_processor_id()))
+			cpu_die();
+#endif
 	}
 }
 
