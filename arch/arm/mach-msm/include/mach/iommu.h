@@ -15,13 +15,16 @@
 
 #include <linux/interrupt.h>
 #include <linux/clk.h>
+#include <linux/list.h>
+#include <linux/regulator/consumer.h>
 #include <mach/socinfo.h>
 
 extern pgprot_t     pgprot_kernel;
-extern struct platform_device *msm_iommu_root_dev;
+extern struct bus_type msm_iommu_sec_bus_type;
 
 /* Domain attributes */
 #define MSM_IOMMU_DOMAIN_PT_CACHEABLE	0x1
+#define MSM_IOMMU_DOMAIN_PT_SECURE	0x2
 
 /* Mask for the cache policy attribute */
 #define MSM_IOMMU_CP_MASK		0x03
@@ -33,6 +36,11 @@ extern struct platform_device *msm_iommu_root_dev;
  * not expected to change at run time.
  */
 #define MAX_NUM_MIDS	32
+
+/* Maximum number of SMT entries allowed by the system */
+#define MAX_NUM_SMR	128
+
+#define MAX_NUM_BFB_REGS	32
 
 /**
  * struct msm_iommu_dev - a single IOMMU hardware instance
@@ -60,6 +68,17 @@ struct msm_iommu_ctx_dev {
 	int mids[MAX_NUM_MIDS];
 };
 
+/**
+ * struct msm_iommu_bfb_settings - a set of IOMMU BFB tuning parameters
+ * regs		An array of register offsets to configure
+ * data		Values to write to corresponding registers
+ * length	Number of valid entries in the offset/val arrays
+ */
+struct msm_iommu_bfb_settings {
+	unsigned int regs[MAX_NUM_BFB_REGS];
+	unsigned int data[MAX_NUM_BFB_REGS];
+	int length;
+};
 
 /**
  * struct msm_iommu_drvdata - A single IOMMU hardware instance
@@ -68,6 +87,12 @@ struct msm_iommu_ctx_dev {
  * @irq:	Interrupt number
  * @clk:	The bus clock for this IOMMU hardware instance
  * @pclk:	The clock for the IOMMU bus interconnect
+ * @aclk:	Alternate clock for this IOMMU core, if any
+ * @name:	Human-readable name of this IOMMU device
+ * @gdsc:	Regulator needed to power this HW block (v2 only)
+ * @bfb_settings: Optional BFB performance tuning parameters
+ * @dev:	Struct device this hardware instance is tied to
+ * @list:	List head to link all iommus together
  *
  * A msm_iommu_drvdata holds the global driver data about a single piece
  * of an IOMMU hardware instance.
@@ -78,8 +103,17 @@ struct msm_iommu_drvdata {
 	int ttbr_split;
 	struct clk *clk;
 	struct clk *pclk;
+	struct clk *aclk;
 	const char *name;
+	struct regulator *gdsc;
+	struct msm_iommu_bfb_settings *bfb_settings;
+	int sec_id;
+	struct device *dev;
+	struct list_head list;
 };
+
+void msm_iommu_add_drv(struct msm_iommu_drvdata *drv);
+void msm_iommu_remove_drv(struct msm_iommu_drvdata *drv);
 
 /**
  * struct msm_iommu_ctx_drvdata - an IOMMU context bank instance
@@ -87,6 +121,10 @@ struct msm_iommu_drvdata {
  * @pdev:		Platform device associated wit this HW instance
  * @attached_elm:	List element for domains to track which devices are
  *			attached to them
+ * @attached_domain	Domain currently attached to this context (if any)
+ * @name		Human-readable name of this context device
+ * @sids		List of Stream IDs mapped to this context (v2 only)
+ * @nsid		Number of Stream IDs mapped to this context (v2 only)
  *
  * A msm_iommu_ctx_drvdata holds the driver data for a single context bank
  * within each IOMMU hardware instance
@@ -97,6 +135,8 @@ struct msm_iommu_ctx_drvdata {
 	struct list_head attached_elm;
 	struct iommu_domain *attached_domain;
 	const char *name;
+	u32 sids[MAX_NUM_SMR];
+	unsigned int nsid;
 };
 
 /*
@@ -121,7 +161,12 @@ static inline struct device *msm_iommu_get_ctx(const char *ctx_name)
 }
 #endif
 
-#endif
+/*
+ * Function to program the global registers of an IOMMU securely.
+ * This should only be called on IOMMUs for which kernel programming
+ * of global registers is not possible
+ */
+int msm_iommu_sec_program_iommu(int sec_id);
 
 static inline int msm_soc_version_supports_iommu_v1(void)
 {
@@ -145,3 +190,4 @@ static inline int msm_soc_version_supports_iommu_v1(void)
 	}
 	return 1;
 }
+#endif

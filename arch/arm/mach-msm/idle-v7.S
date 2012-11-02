@@ -22,12 +22,41 @@
 #include "idle.h"
 #include "idle-macros.S"
 
-#ifdef CONFIG_ARCH_MSM_KRAIT
+#ifdef CONFIG_MSM_SCM
 #define SCM_SVC_BOOT 0x1
 #define SCM_CMD_TERMINATE_PC 0x2
 #endif
 
 ENTRY(msm_arch_idle)
+#ifdef CONFIG_ARCH_MSM_KRAIT
+	mrc 	p15, 0, r0, c0, c0, 0
+	bic	r1, r0, #0xff
+	movw	r2, #0x0400
+	movt	r2, #0x511F
+	movw	r3, #0x0600
+	movt	r3, #0x510F
+	cmp	r2, r1
+	cmpne	r3, r1
+	bne	go_wfi
+
+	mrs	r0, cpsr
+	cpsid	if
+
+	mrc	p15, 7, r1, c15, c0, 5
+	bic	r2, r1, #0x20000
+	mcr	p15, 7, r2, c15, c0, 5
+	isb
+
+go_wfi:
+	wfi
+	bne	wfi_done
+	mcr	p15, 7, r1, c15, c0, 5
+	isb
+	msr	cpsr_c, r0
+
+wfi_done:
+	bx	lr
+#else
 	wfi
 #ifdef CONFIG_ARCH_MSM8X60
 	mrc	p14, 1, r1, c1, c5, 4 /* read ETM PDSR to clear sticky bit */
@@ -35,6 +64,7 @@ ENTRY(msm_arch_idle)
 	isb
 #endif
 	bx	lr
+#endif
 
 ENTRY(msm_pm_collapse)
 #if defined(CONFIG_MSM_FIQ_SUPPORT)
@@ -97,8 +127,32 @@ ENTRY(msm_pm_collapse)
 	cmp	r1, #1
 	bne	skip
 	bl	v7_flush_dcache_all
+	ldr	r1, =msm_pm_flush_l2_fn
+	ldr	r1, [r1]
+	cmp	r1, #0
+	blxne	r1
+
 skip:
-#ifdef CONFIG_ARCH_MSM_KRAIT
+	ldr	r1, =msm_pm_disable_l2_fn
+	ldr	r1, [r1]
+	cmp	r1, #0
+	blxne	r1
+	dmb
+
+	mrc	p15, 0, r0, c0, c0, 5	/* MPIDR */
+	and	r0, r0, #15		/* what CPU am I */
+
+	ldr	r1, =msm_pc_debug_counters /*load the IMEM debug location */
+	ldr	r1, [r1]
+	cmp	r1, #0
+	beq	skip_pc_debug1
+	add	r1, r1, r0, LSL #4	/* debug location for this CPU */
+	ldr	r2, [r1]
+	add	r2, #1
+	str	r2, [r1]
+skip_pc_debug1:
+
+#ifdef CONFIG_MSM_SCM
 	ldr	r0, =SCM_SVC_BOOT
 	ldr	r1, =SCM_CMD_TERMINATE_PC
 	ldr	r2, =msm_pm_flush_l2_flag
@@ -125,6 +179,26 @@ skip:
 #if defined(CONFIG_MSM_FIQ_SUPPORT)
 	cpsie   f
 #endif
+	mrc	p15, 0, r0, c0, c0, 5 /* MPIDR */
+	and	r0, r0, #15              /* what CPU am I                  */
+
+	ldr	r1, =msm_pc_debug_counters /*load the IMEM debug location */
+	ldr	r1, [r1]
+	cmp	r1, #0
+	beq	skip_pc_debug2
+	add	r1, r1, r0, LSL #4	/* debug location for this CPU */
+	add	r1, #8
+	ldr	r2, [r1]
+	add	r2, #1
+	str	r2, [r1]
+
+skip_pc_debug2:
+	ldr	r1, =msm_pm_enable_l2_fn
+	ldr	r1, [r1]
+	cmp	r1, #0
+	blxne	r1
+	dmb
+
 #ifdef CONFIG_MSM_JTAG
 	bl	msm_jtag_restore_state
 #endif
@@ -228,11 +302,16 @@ msm_pm_pa_to_va:
 	SET_SMP_COHERENCY ON
 #endif
 
-#ifdef CONFIG_MSM_JTAG
+	ldr	r1, =msm_pm_enable_l2_fn
+	ldr	r1, [r1]
+	cmp	r1, #0
 	stmfd   sp!, {lr}
+	blxne	r1
+	dmb
+#ifdef CONFIG_MSM_JTAG
 	bl      msm_jtag_restore_state
-	ldmfd   sp!, {lr}
 #endif
+	ldmfd   sp!, {lr}
 	mov     r0, #1
 	bx      lr
 	nop
@@ -246,6 +325,22 @@ ENTRY(msm_pm_boot_entry)
 	mrc     p15, 0, r0, c0, c0, 5    /* MPIDR                          */
 	and     r0, r0, #15              /* what CPU am I                  */
 
+	ldr	r1, =msm_pc_debug_counters_phys /*phys addr for IMEM reg */
+	ldr	r2, =msm_pm_boot_entry
+	adr	r3, msm_pm_boot_entry
+	add	r1, r1, r3               /* translate virt to phys addr    */
+	sub	r1, r1, r2
+	ldr	r1,[r1]
+
+	cmp	r1, #0
+	beq	skip_pc_debug3
+	add	r1, r1, r0, LSL #4	/* debug location for this CPU */
+	add	r1, #4			/* warmboot entry counter*/
+	ldr	r2, [r1]
+	add	r2, #1
+	str	r2, [r1]
+
+skip_pc_debug3:
 	ldr     r1, =msm_pm_boot_vector
 	ldr     r2, =msm_pm_boot_entry
 	adr     r3, msm_pm_boot_entry
@@ -256,9 +351,14 @@ ENTRY(msm_pm_boot_entry)
 	ldr     pc, [r1]                 /* jump                           */
 
 ENTRY(msm_pm_set_l2_flush_flag)
-	ldr r1, =msm_pm_flush_l2_flag
-	str r0, [r1]
-	bx lr
+	ldr     r1, =msm_pm_flush_l2_flag
+	str     r0, [r1]
+	bx      lr
+
+ENTRY(msm_pm_get_l2_flush_flag)
+	ldr     r1, =msm_pm_flush_l2_flag
+	ldr     r0, [r1]
+	bx      lr
 
 	.data
 
@@ -288,6 +388,26 @@ apps_power_collapse:
 
 	.globl l2x0_base_addr
 l2x0_base_addr:
+	.long 0x0
+
+	.globl msm_pc_debug_counters_phys
+msm_pc_debug_counters_phys:
+	.long 0x0
+
+	.globl msm_pc_debug_counters
+msm_pc_debug_counters:
+	.long 0x0
+
+	.globl msm_pm_enable_l2_fn
+msm_pm_enable_l2_fn:
+	.long 0x0
+
+	.globl msm_pm_disable_l2_fn
+msm_pm_disable_l2_fn:
+	.long 0x0
+
+	.globl msm_pm_flush_l2_fn
+msm_pm_flush_l2_fn:
 	.long 0x0
 
 /*

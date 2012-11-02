@@ -1,4 +1,4 @@
-/* Copyright (c) 2010, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -68,29 +68,6 @@ static struct msm_cpuidle_state msm_cstates[] = {
 		MSM_PM_SLEEP_MODE_POWER_COLLAPSE_STANDALONE},
 };
 
-
-#ifdef CONFIG_MSM_SLEEP_STATS
-static DEFINE_PER_CPU(struct atomic_notifier_head, msm_cpuidle_notifiers);
-
-int msm_cpuidle_register_notifier(unsigned int cpu, struct notifier_block *nb)
-{
-	struct atomic_notifier_head *head =
-		&per_cpu(msm_cpuidle_notifiers, cpu);
-
-	return atomic_notifier_chain_register(head, nb);
-}
-EXPORT_SYMBOL(msm_cpuidle_register_notifier);
-
-int msm_cpuidle_unregister_notifier(unsigned int cpu, struct notifier_block *nb)
-{
-	struct atomic_notifier_head *head =
-		&per_cpu(msm_cpuidle_notifiers, cpu);
-
-	return atomic_notifier_chain_unregister(head, nb);
-}
-EXPORT_SYMBOL(msm_cpuidle_unregister_notifier);
-#endif
-
 static int msm_cpuidle_enter(
 	struct cpuidle_device *dev, struct cpuidle_driver *drv, int index)
 {
@@ -98,23 +75,13 @@ static int msm_cpuidle_enter(
 	int i = 0;
 	enum msm_pm_sleep_mode pm_mode;
 	struct cpuidle_state_usage *st_usage = NULL;
-#ifdef CONFIG_MSM_SLEEP_STATS
-	struct atomic_notifier_head *head =
-			&__get_cpu_var(msm_cpuidle_notifiers);
-#endif
-
-	local_irq_disable();
-
-#ifdef CONFIG_MSM_SLEEP_STATS
-	atomic_notifier_call_chain(head, MSM_CPUIDLE_STATE_ENTER, NULL);
-#endif
 
 #ifdef CONFIG_CPU_PM
 	cpu_pm_enter();
 #endif
 
 	pm_mode = msm_pm_idle_prepare(dev, drv, index);
-	msm_pm_idle_enter(pm_mode);
+	dev->last_residency = msm_pm_idle_enter(pm_mode);
 	for (i = 0; i < dev->state_count; i++) {
 		st_usage = &dev->states_usage[i];
 		if ((enum msm_pm_sleep_mode) cpuidle_get_statedata(st_usage)
@@ -126,10 +93,6 @@ static int msm_cpuidle_enter(
 
 #ifdef CONFIG_CPU_PM
 	cpu_pm_exit();
-#endif
-
-#ifdef CONFIG_MSM_SLEEP_STATS
-	atomic_notifier_call_chain(head, MSM_CPUIDLE_STATE_EXIT, NULL);
 #endif
 
 	local_irq_enable();
@@ -219,16 +182,3 @@ int __init msm_cpuidle_init(void)
 
 	return 0;
 }
-
-static int __init msm_cpuidle_early_init(void)
-{
-#ifdef CONFIG_MSM_SLEEP_STATS
-	unsigned int cpu;
-
-	for_each_possible_cpu(cpu)
-		ATOMIC_INIT_NOTIFIER_HEAD(&per_cpu(msm_cpuidle_notifiers, cpu));
-#endif
-	return 0;
-}
-
-early_initcall(msm_cpuidle_early_init);

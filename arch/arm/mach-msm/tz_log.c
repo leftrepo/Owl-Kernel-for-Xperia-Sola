@@ -496,17 +496,23 @@ static int __devinit tz_log_probe(struct platform_device *pdev)
 	 */
 	tzdiag_phy_iobase = readl_relaxed(virt_iobase);
 
-	/*
-	 * Map the 4KB diagnostic information area
-	 */
-	tzdbg.virt_iobase = devm_ioremap_nocache(&pdev->dev,
-				tzdiag_phy_iobase, DEBUG_MAX_RW_BUF);
+	if (!pdev->dev.of_node) {
 
-	if (!tzdbg.virt_iobase) {
-		dev_err(&pdev->dev,
-			"%s: ERROR could not ioremap: start=%p, len=%u\n",
-			__func__, (void *) tzdiag_phy_iobase, DEBUG_MAX_RW_BUF);
-		return -ENXIO;
+		/*
+		 * Map the 4KB diagnostic information area
+		 */
+		tzdbg.virt_iobase = devm_ioremap_nocache(&pdev->dev,
+					tzdiag_phy_iobase, DEBUG_MAX_RW_BUF);
+
+		if (!tzdbg.virt_iobase) {
+			dev_err(&pdev->dev,
+				"%s: ERROR could not ioremap: start=%p, len=%u\n",
+				__func__, (void *) tzdiag_phy_iobase,
+				DEBUG_MAX_RW_BUF);
+			return -ENXIO;
+		}
+	} else {
+		tzdbg.virt_iobase = virt_iobase;
 	}
 
 	ptr = kzalloc(DEBUG_MAX_RW_BUF, GFP_KERNEL);
@@ -536,12 +542,19 @@ static int __devexit tz_log_remove(struct platform_device *pdev)
 	return 0;
 }
 
+static struct of_device_id tzlog_match[] = {
+	{	.compatible = "qcom,tz-log",
+	},
+	{}
+};
+
 static struct platform_driver tz_log_driver = {
 	.probe		= tz_log_probe,
 	.remove		= __devexit_p(tz_log_remove),
 	.driver		= {
 		.name = "tz_log",
 		.owner = THIS_MODULE,
+		.of_match_table = tzlog_match,
 	},
 };
 

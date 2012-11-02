@@ -23,12 +23,14 @@
 #include <linux/delay.h>
 #include <linux/io.h>
 #include <linux/percpu.h>
+#include <linux/mm.h>
 
 #include <asm/localtimer.h>
 #include <asm/mach/time.h>
 #include <asm/hardware/gic.h>
 #include <asm/sched_clock.h>
 #include <asm/smp_plat.h>
+#include <asm/user_accessible_timer.h>
 #include <mach/msm_iomap.h>
 #include <mach/irqs.h>
 #include <mach/socinfo.h>
@@ -964,8 +966,8 @@ int __cpuinit local_timer_setup(struct clock_event_device *evt)
 	if (!smp_processor_id())
 		return 0;
 
-	if (cpu_is_msm8x60() || cpu_is_msm8960() || cpu_is_apq8064()
-			|| cpu_is_msm8930())
+	if (cpu_is_msm8x60() || soc_class_is_msm8960() ||
+	    soc_class_is_apq8064() || soc_class_is_msm8930())
 		__raw_writel(DGT_CLK_CTL_DIV_4, MSM_TMR_BASE + DGT_CLK_CTL);
 
 	if (__get_cpu_var(first_boot)) {
@@ -1061,7 +1063,8 @@ static void __init msm_timer_init(void)
 		sclk_hz = 32765;
 		gpt->flags |= MSM_CLOCK_FLAGS_UNSTABLE_COUNT;
 		dgt->flags |= MSM_CLOCK_FLAGS_UNSTABLE_COUNT;
-	} else if (cpu_is_msm8960() || cpu_is_apq8064() || cpu_is_msm8930()) {
+	} else if (soc_class_is_msm8960() || soc_class_is_apq8064() ||
+		   soc_class_is_msm8930()) {
 		global_timer_offset = MSM_TMR0_BASE - MSM_TMR_BASE;
 		dgt->freq = 6750000;
 		__raw_writel(DGT_CLK_CTL_DIV_4, MSM_TMR_BASE + DGT_CLK_CTL);
@@ -1070,7 +1073,7 @@ static void __init msm_timer_init(void)
 		gpt->freq = 32765;
 		gpt_hz = 32765;
 		sclk_hz = 32765;
-		if (!cpu_is_msm8930()) {
+		if (!soc_class_is_msm8930() && !cpu_is_msm8960ab()) {
 			gpt->flags |= MSM_CLOCK_FLAGS_UNSTABLE_COUNT;
 			dgt->flags |= MSM_CLOCK_FLAGS_UNSTABLE_COUNT;
 		}
@@ -1120,9 +1123,9 @@ static void __init msm_timer_init(void)
 			       "failed for %s\n", cs->name);
 
 		ce->irq = clock->irq;
-		if (cpu_is_msm8x60() || cpu_is_msm8960() || cpu_is_apq8064() ||
-				cpu_is_msm8930() || cpu_is_msm9615() ||
-				cpu_is_msm8625()) {
+		if (cpu_is_msm8x60() || cpu_is_msm9615() || cpu_is_msm8625() ||
+		    soc_class_is_msm8960() || soc_class_is_apq8064() ||
+		    soc_class_is_msm8930()) {
 			clock->percpu_evt = alloc_percpu(struct clock_event_device *);
 			if (!clock->percpu_evt) {
 				pr_err("msm_timer_init: memory allocation "
@@ -1159,6 +1162,16 @@ static void __init msm_timer_init(void)
 		clockevents_register_device(ce);
 	}
 	msm_sched_clock_init();
+
+	if (use_user_accessible_timers()) {
+		if (cpu_is_msm8960() || cpu_is_msm8930() || cpu_is_apq8064()) {
+			struct msm_clock *gtclock = &msm_clocks[MSM_CLOCK_GPT];
+			void __iomem *addr = gtclock->regbase +
+				TIMER_COUNT_VAL + global_timer_offset;
+			setup_user_timer_offset(virt_to_phys(addr)&0xfff);
+			set_user_accessible_timer_flag(true);
+		}
+	}
 
 #ifdef ARCH_HAS_READ_CURRENT_TIMER
 	if (is_smp()) {

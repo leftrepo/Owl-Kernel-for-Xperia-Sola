@@ -23,11 +23,11 @@
 #include <linux/clkdev.h>
 
 #include <mach/msm_iomap.h>
-#include <mach/clk.h>
 #include <mach/scm-io.h>
 #include <mach/rpm.h>
 #include <mach/rpm-regulator.h>
 
+#include "clock.h"
 #include "clock-local.h"
 #include "clock-rpm.h"
 #include "clock-voter.h"
@@ -268,7 +268,8 @@ enum vdd_dig_levels {
 	VDD_DIG_NONE,
 	VDD_DIG_LOW,
 	VDD_DIG_NOMINAL,
-	VDD_DIG_HIGH
+	VDD_DIG_HIGH,
+	VDD_DIG_NUM
 };
 
 static int set_vdd_dig(struct clk_vdd_class *vdd_class, int level)
@@ -284,20 +285,29 @@ static int set_vdd_dig(struct clk_vdd_class *vdd_class, int level)
 				    vdd_uv[level], 1200000, 1);
 }
 
-static DEFINE_VDD_CLASS(vdd_dig, set_vdd_dig);
+static DEFINE_VDD_CLASS(vdd_dig, set_vdd_dig, VDD_DIG_NUM);
 
 #define VDD_DIG_FMAX_MAP1(l1, f1) \
-	.vdd_class = &vdd_dig, \
-	.fmax[VDD_DIG_##l1] = (f1)
+	.vdd_class = &vdd_dig,			\
+	.fmax = (unsigned long[VDD_DIG_NUM]) {	\
+		[VDD_DIG_##l1] = (f1),		\
+	},					\
+	.num_fmax = VDD_DIG_NUM
 #define VDD_DIG_FMAX_MAP2(l1, f1, l2, f2) \
-	.vdd_class = &vdd_dig, \
-	.fmax[VDD_DIG_##l1] = (f1), \
-	.fmax[VDD_DIG_##l2] = (f2)
+	.vdd_class = &vdd_dig,			\
+	.fmax = (unsigned long[VDD_DIG_NUM]) {	\
+		[VDD_DIG_##l1] = (f1),		\
+		[VDD_DIG_##l2] = (f2),		\
+	},					\
+	.num_fmax = VDD_DIG_NUM
 #define VDD_DIG_FMAX_MAP3(l1, f1, l2, f2, l3, f3) \
-	.vdd_class = &vdd_dig, \
-	.fmax[VDD_DIG_##l1] = (f1), \
-	.fmax[VDD_DIG_##l2] = (f2), \
-	.fmax[VDD_DIG_##l3] = (f3)
+	.vdd_class = &vdd_dig,			\
+	.fmax = (unsigned long[VDD_DIG_NUM]) {	\
+		[VDD_DIG_##l1] = (f1),		\
+		[VDD_DIG_##l2] = (f2),		\
+		[VDD_DIG_##l3] = (f3),		\
+	},					\
+	.num_fmax = VDD_DIG_NUM
 
 DEFINE_CLK_RPM_BRANCH(pxo_clk, pxo_a_clk, PXO, 27000000);
 DEFINE_CLK_RPM_BRANCH(cxo_clk, cxo_a_clk, CXO, 19200000);
@@ -307,58 +317,50 @@ static struct pll_vote_clk pll8_clk = {
 	.en_mask = BIT(8),
 	.status_reg = BB_PLL8_STATUS_REG,
 	.status_mask = BIT(16),
-	.parent = &pxo_clk.c,
 	.c = {
+		.parent = &pxo_clk.c,
 		.dbg_name = "pll8_clk",
 		.rate = 384000000,
 		.ops = &clk_ops_pll_vote,
 		CLK_INIT(pll8_clk.c),
-		.warned = true,
 	},
 };
 
 static struct pll_clk pll2_clk = {
 	.mode_reg = MM_PLL1_MODE_REG,
-	.parent = &pxo_clk.c,
 	.c = {
+		.parent = &pxo_clk.c,
 		.dbg_name = "pll2_clk",
 		.rate = 800000000,
 		.ops = &clk_ops_local_pll,
 		CLK_INIT(pll2_clk.c),
-		.warned = true,
 	},
 };
 
 static struct pll_clk pll3_clk = {
 	.mode_reg = MM_PLL2_MODE_REG,
-	.parent = &pxo_clk.c,
 	.c = {
+		.parent = &pxo_clk.c,
 		.dbg_name = "pll3_clk",
 		.rate = 0, /* TODO: Detect rate dynamically */
 		.ops = &clk_ops_local_pll,
 		CLK_INIT(pll3_clk.c),
-		.warned = true,
 	},
 };
 
-static int pll4_clk_enable(struct clk *clk)
+static int pll4_clk_enable(struct clk *c)
 {
 	struct msm_rpm_iv_pair iv = { MSM_RPM_ID_PLL_4, 1 };
 	return msm_rpm_set_noirq(MSM_RPM_CTX_SET_0, &iv, 1);
 }
 
-static void pll4_clk_disable(struct clk *clk)
+static void pll4_clk_disable(struct clk *c)
 {
 	struct msm_rpm_iv_pair iv = { MSM_RPM_ID_PLL_4, 0 };
 	msm_rpm_set_noirq(MSM_RPM_CTX_SET_0, &iv, 1);
 }
 
-static struct clk *pll4_clk_get_parent(struct clk *clk)
-{
-	return &pxo_clk.c;
-}
-
-static bool pll4_clk_is_local(struct clk *clk)
+static bool pll4_clk_is_local(struct clk *c)
 {
 	return false;
 }
@@ -376,18 +378,17 @@ static enum handoff pll4_clk_handoff(struct clk *clk)
 static struct clk_ops clk_ops_pll4 = {
 	.enable = pll4_clk_enable,
 	.disable = pll4_clk_disable,
-	.get_parent = pll4_clk_get_parent,
 	.is_local = pll4_clk_is_local,
 	.handoff = pll4_clk_handoff,
 };
 
 static struct fixed_clk pll4_clk = {
 	.c = {
+		.parent = &pxo_clk.c,
 		.dbg_name = "pll4_clk",
 		.rate = 540672000,
 		.ops = &clk_ops_pll4,
 		CLK_INIT(pll4_clk.c),
-		.warned = true,
 	},
 };
 
@@ -397,7 +398,7 @@ static struct fixed_clk pll4_clk = {
 
 /* Unlike other clocks, the TV rate is adjusted through PLL
  * re-programming. It is also routed through an MND divider. */
-static void set_rate_tv(struct rcg_clk *clk, struct clk_freq_tbl *nf)
+static void set_rate_tv(struct rcg_clk *rcg, struct clk_freq_tbl *nf)
 {
 	struct pll_rate *rate = nf->extra_freq_data;
 	uint32_t pll_mode, pll_config, misc_cc2;
@@ -426,7 +427,7 @@ static void set_rate_tv(struct rcg_clk *clk, struct clk_freq_tbl *nf)
 	writel_relaxed(pll_config, MM_PLL2_CONFIG_REG);
 
 	/* Configure MND. */
-	set_rate_mnd(clk, nf);
+	set_rate_mnd(rcg, nf);
 
 	/* Configure hdmi_ref_clk to be equal to the TV clock rate. */
 	misc_cc2 = readl_relaxed(MISC_CC2_REG);
@@ -601,8 +602,7 @@ static struct branch_clk smi_2x_axi_clk = {
 	},
 	.c = {
 		.dbg_name = "smi_2x_axi_clk",
-		.ops = &clk_ops_branch,
-		.flags = CLKFLAG_SKIP_AUTO_OFF,
+		.ops = &clk_ops_smi_2x,
 		CLK_INIT(smi_2x_axi_clk.c),
 	},
 };
@@ -1381,8 +1381,8 @@ static struct branch_clk usb_fs1_xcvr_clk = {
 		.halt_reg = CLK_HALT_CFPB_STATEA_REG,
 		.halt_bit = 15,
 	},
-	.parent = &usb_fs1_src_clk.c,
 	.c = {
+		.parent = &usb_fs1_src_clk.c,
 		.dbg_name = "usb_fs1_xcvr_clk",
 		.ops = &clk_ops_branch,
 		CLK_INIT(usb_fs1_xcvr_clk.c),
@@ -1398,8 +1398,8 @@ static struct branch_clk usb_fs1_sys_clk = {
 		.halt_reg = CLK_HALT_CFPB_STATEA_REG,
 		.halt_bit = 16,
 	},
-	.parent = &usb_fs1_src_clk.c,
 	.c = {
+		.parent = &usb_fs1_src_clk.c,
 		.dbg_name = "usb_fs1_sys_clk",
 		.ops = &clk_ops_branch,
 		CLK_INIT(usb_fs1_sys_clk.c),
@@ -1416,8 +1416,8 @@ static struct branch_clk usb_fs2_xcvr_clk = {
 		.halt_reg = CLK_HALT_CFPB_STATEA_REG,
 		.halt_bit = 12,
 	},
-	.parent = &usb_fs2_src_clk.c,
 	.c = {
+		.parent = &usb_fs2_src_clk.c,
 		.dbg_name = "usb_fs2_xcvr_clk",
 		.ops = &clk_ops_branch,
 		CLK_INIT(usb_fs2_xcvr_clk.c),
@@ -1433,8 +1433,8 @@ static struct branch_clk usb_fs2_sys_clk = {
 		.halt_reg = CLK_HALT_CFPB_STATEA_REG,
 		.halt_bit = 13,
 	},
-	.parent = &usb_fs2_src_clk.c,
 	.c = {
+		.parent = &usb_fs2_src_clk.c,
 		.dbg_name = "usb_fs2_sys_clk",
 		.ops = &clk_ops_branch,
 		CLK_INIT(usb_fs2_sys_clk.c),
@@ -1449,8 +1449,8 @@ static struct branch_clk ce2_p_clk = {
 		.halt_reg = CLK_HALT_CFPB_STATEC_REG,
 		.halt_bit = 0,
 	},
-	.parent = &pxo_clk.c,
 	.c = {
+		.parent = &pxo_clk.c,
 		.dbg_name = "ce2_p_clk",
 		.ops = &clk_ops_branch,
 		CLK_INIT(ce2_p_clk.c),
@@ -1803,8 +1803,8 @@ static struct branch_clk adm0_clk = {
 		.halt_check = HALT_VOTED,
 		.halt_bit = 14,
 	},
-	.parent = &pxo_clk.c,
 	.c = {
+		.parent = &pxo_clk.c,
 		.dbg_name = "adm0_clk",
 		.ops = &clk_ops_branch,
 		CLK_INIT(adm0_clk.c),
@@ -1834,8 +1834,8 @@ static struct branch_clk adm1_clk = {
 		.halt_check = HALT_VOTED,
 		.halt_bit = 12,
 	},
-	.parent = &pxo_clk.c,
 	.c = {
+		.parent = &pxo_clk.c,
 		.dbg_name = "adm1_clk",
 		.ops = &clk_ops_branch,
 		CLK_INIT(adm1_clk.c),
@@ -2039,8 +2039,8 @@ static struct branch_clk csi0_clk = {
 		.halt_reg = DBG_BUS_VEC_B_REG,
 		.halt_bit = 13,
 	},
-	.parent = &csi_src_clk.c,
 	.c = {
+		.parent = &csi_src_clk.c,
 		.dbg_name = "csi0_clk",
 		.ops = &clk_ops_branch,
 		CLK_INIT(csi0_clk.c),
@@ -2056,8 +2056,8 @@ static struct branch_clk csi1_clk = {
 		.halt_reg = DBG_BUS_VEC_B_REG,
 		.halt_bit = 14,
 	},
-	.parent = &csi_src_clk.c,
 	.c = {
+		.parent = &csi_src_clk.c,
 		.dbg_name = "csi1_clk",
 		.ops = &clk_ops_branch,
 		CLK_INIT(csi1_clk.c),
@@ -2561,8 +2561,8 @@ static struct branch_clk pixel_lcdc_clk = {
 		.halt_reg = DBG_BUS_VEC_C_REG,
 		.halt_bit = 21,
 	},
-	.parent = &pixel_mdp_clk.c,
 	.c = {
+		.parent = &pixel_mdp_clk.c,
 		.dbg_name = "pixel_lcdc_clk",
 		.ops = &clk_ops_branch,
 		CLK_INIT(pixel_lcdc_clk.c),
@@ -2690,8 +2690,8 @@ static struct branch_clk tv_enc_clk = {
 		.halt_reg = DBG_BUS_VEC_D_REG,
 		.halt_bit = 8,
 	},
-	.parent = &tv_src_clk.c,
 	.c = {
+		.parent = &tv_src_clk.c,
 		.dbg_name = "tv_enc_clk",
 		.ops = &clk_ops_branch,
 		CLK_INIT(tv_enc_clk.c),
@@ -2705,8 +2705,8 @@ static struct branch_clk tv_dac_clk = {
 		.halt_reg = DBG_BUS_VEC_D_REG,
 		.halt_bit = 9,
 	},
-	.parent = &tv_src_clk.c,
 	.c = {
+		.parent = &tv_src_clk.c,
 		.dbg_name = "tv_dac_clk",
 		.ops = &clk_ops_branch,
 		CLK_INIT(tv_dac_clk.c),
@@ -2722,8 +2722,8 @@ static struct branch_clk mdp_tv_clk = {
 		.halt_reg = DBG_BUS_VEC_D_REG,
 		.halt_bit = 11,
 	},
-	.parent = &tv_src_clk.c,
 	.c = {
+		.parent = &tv_src_clk.c,
 		.dbg_name = "mdp_tv_clk",
 		.ops = &clk_ops_branch,
 		CLK_INIT(mdp_tv_clk.c),
@@ -2739,8 +2739,8 @@ static struct branch_clk hdmi_tv_clk = {
 		.halt_reg = DBG_BUS_VEC_D_REG,
 		.halt_bit = 10,
 	},
-	.parent = &tv_src_clk.c,
 	.c = {
+		.parent = &tv_src_clk.c,
 		.dbg_name = "hdmi_tv_clk",
 		.ops = &clk_ops_branch,
 		CLK_INIT(hdmi_tv_clk.c),
@@ -2929,8 +2929,8 @@ static struct branch_clk csi0_vfe_clk = {
 		.halt_reg = DBG_BUS_VEC_B_REG,
 		.halt_bit = 7,
 	},
-	.parent = &vfe_clk.c,
 	.c = {
+		.parent = &vfe_clk.c,
 		.dbg_name = "csi0_vfe_clk",
 		.ops = &clk_ops_branch,
 		CLK_INIT(csi0_vfe_clk.c),
@@ -2946,8 +2946,8 @@ static struct branch_clk csi1_vfe_clk = {
 		.halt_reg = DBG_BUS_VEC_B_REG,
 		.halt_bit = 8,
 	},
-	.parent = &vfe_clk.c,
 	.c = {
+		.parent = &vfe_clk.c,
 		.dbg_name = "csi1_vfe_clk",
 		.ops = &clk_ops_branch,
 		CLK_INIT(csi1_vfe_clk.c),
@@ -2976,6 +2976,7 @@ static struct clk_freq_tbl clk_tbl_aif_osr[] = {
 	F_AIF_OSR( 8192000, pll4, 2, 1,  33),
 	F_AIF_OSR(12288000, pll4, 4, 1,  11),
 	F_AIF_OSR(24576000, pll4, 2, 1,  11),
+	F_AIF_OSR(27000000, pxo,  1, 0,   0),
 	F_END
 };
 
@@ -3001,7 +3002,7 @@ static struct clk_freq_tbl clk_tbl_aif_osr[] = {
 		.c = { \
 			.dbg_name = #i "_clk", \
 			.ops = &clk_ops_rcg, \
-			VDD_DIG_FMAX_MAP1(LOW, 24576000), \
+			VDD_DIG_FMAX_MAP1(LOW, 27000000), \
 			CLK_INIT(i##_clk.c), \
 		}, \
 	}
@@ -3022,6 +3023,7 @@ static struct clk_freq_tbl clk_tbl_aif_osr[] = {
 			.dbg_name = #i "_clk", \
 			.ops = &clk_ops_cdiv, \
 			CLK_INIT(i##_clk.c), \
+			.rate = ULONG_MAX, \
 		}, \
 	}
 
@@ -3069,6 +3071,7 @@ static struct clk_freq_tbl clk_tbl_pcm[] = {
 	F_PCM( 8192000, pll4, 2, 1,  33),
 	F_PCM(12288000, pll4, 4, 1,  11),
 	F_PCM(24580000, pll4, 2, 1,  11),
+	F_PCM(27000000, pxo,  1, 0,   0),
 	F_END
 };
 
@@ -3093,8 +3096,9 @@ static struct rcg_clk pcm_clk = {
 	.c = {
 		.dbg_name = "pcm_clk",
 		.ops = &clk_ops_rcg,
-		VDD_DIG_FMAX_MAP1(LOW, 24580000),
+		VDD_DIG_FMAX_MAP1(LOW, 27000000),
 		CLK_INIT(pcm_clk.c),
+		.rate = ULONG_MAX,
 	},
 };
 
@@ -3133,7 +3137,7 @@ static DEFINE_CLK_MEASURE(l2_m_clk);
 #ifdef CONFIG_DEBUG_FS
 struct measure_sel {
 	u32 test_vector;
-	struct clk *clk;
+	struct clk *c;
 };
 
 static struct measure_sel measure_mux[] = {
@@ -3308,12 +3312,12 @@ static struct measure_sel measure_mux[] = {
 	{ TEST_SC(0x42), &l2_m_clk },
 };
 
-static struct measure_sel *find_measure_sel(struct clk *clk)
+static struct measure_sel *find_measure_sel(struct clk *c)
 {
 	int i;
 
 	for (i = 0; i < ARRAY_SIZE(measure_mux); i++)
-		if (measure_mux[i].clk == clk)
+		if (measure_mux[i].c == c)
 			return &measure_mux[i];
 	return NULL;
 }
@@ -3323,7 +3327,7 @@ static int measure_clk_set_parent(struct clk *c, struct clk *parent)
 	int ret = 0;
 	u32 clk_sel;
 	struct measure_sel *p;
-	struct measure_clk *clk = to_measure_clk(c);
+	struct measure_clk *measure = to_measure_clk(c);
 	unsigned long flags;
 
 	if (!parent)
@@ -3340,9 +3344,9 @@ static int measure_clk_set_parent(struct clk *c, struct clk *parent)
 	 * and scaling factors (multiplier, divider).
 	 */
 	clk_sel = p->test_vector & TEST_CLK_SEL_MASK;
-	clk->sample_ticks = 0x10000;
-	clk->multiplier = 1;
-	clk->divider = 1;
+	measure->sample_ticks = 0x10000;
+	measure->multiplier = 1;
+	measure->divider = 1;
 	switch (p->test_vector >> TEST_TYPE_SHIFT) {
 	case TEST_TYPE_PER_LS:
 		writel_relaxed(0x4030D00|BVAL(7, 0, clk_sel), CLK_TEST_REG);
@@ -3355,7 +3359,7 @@ static int measure_clk_set_parent(struct clk *c, struct clk *parent)
 		writel_relaxed(BVAL(6, 1, clk_sel)|BIT(0), DBG_CFG_REG_LS_REG);
 		break;
 	case TEST_TYPE_MM_HS2X:
-		clk->divider = 2;
+		measure->divider = 2;
 	case TEST_TYPE_MM_HS:
 		writel_relaxed(0x402B800, CLK_TEST_REG);
 		writel_relaxed(BVAL(6, 1, clk_sel)|BIT(0), DBG_CFG_REG_HS_REG);
@@ -3367,8 +3371,8 @@ static int measure_clk_set_parent(struct clk *c, struct clk *parent)
 		break;
 	case TEST_TYPE_SC:
 		writel_relaxed(0x5020000|BVAL(16, 10, clk_sel), CLK_TEST_REG);
-		clk->sample_ticks = 0x4000;
-		clk->multiplier = 2;
+		measure->sample_ticks = 0x4000;
+		measure->multiplier = 2;
 		break;
 	default:
 		ret = -EPERM;
@@ -3410,7 +3414,7 @@ static unsigned long measure_clk_get_rate(struct clk *c)
 	unsigned long flags;
 	u32 pdm_reg_backup, ringosc_reg_backup;
 	u64 raw_count_short, raw_count_full;
-	struct measure_clk *clk = to_measure_clk(c);
+	struct measure_clk *measure = to_measure_clk(c);
 	unsigned ret;
 
 	spin_lock_irqsave(&local_clock_reg_lock, flags);
@@ -3431,7 +3435,7 @@ static unsigned long measure_clk_get_rate(struct clk *c)
 	/* Run a short measurement. (~1 ms) */
 	raw_count_short = run_measurement(0x1000);
 	/* Run a full measurement. (~14 ms) */
-	raw_count_full = run_measurement(clk->sample_ticks);
+	raw_count_full = run_measurement(measure->sample_ticks);
 
 	writel_relaxed(ringosc_reg_backup, RINGOSC_NS_REG);
 	writel_relaxed(pdm_reg_backup, PDM_CLK_NS_REG);
@@ -3442,9 +3446,9 @@ static unsigned long measure_clk_get_rate(struct clk *c)
 	else {
 		/* Compute rate in Hz. */
 		raw_count_full = ((raw_count_full * 10) + 15) * 4800000;
-		do_div(raw_count_full,
-		       (((clk->sample_ticks * 10) + 35) * clk->divider));
-		ret = (raw_count_full * clk->multiplier);
+		do_div(raw_count_full, (((measure->sample_ticks * 10) + 35)
+			* measure->divider));
+		ret = (raw_count_full * measure->multiplier);
 	}
 
 	/* Route dbg_hs_clk to PLLTEST.  300mV single-ended amplitude. */
@@ -3454,12 +3458,12 @@ static unsigned long measure_clk_get_rate(struct clk *c)
 	return ret;
 }
 #else /* !CONFIG_DEBUG_FS */
-static int measure_clk_set_parent(struct clk *clk, struct clk *parent)
+static int measure_clk_set_parent(struct clk *c, struct clk *parent)
 {
 	return -EINVAL;
 }
 
-static unsigned long measure_clk_get_rate(struct clk *clk)
+static unsigned long measure_clk_get_rate(struct clk *c)
 {
 	return 0;
 }
@@ -3485,6 +3489,7 @@ static struct clk_lookup msm_clocks_8x60[] = {
 	CLK_LOOKUP("xo",		cxo_a_clk.c,	""),
 	CLK_LOOKUP("xo",		pxo_a_clk.c,	""),
 	CLK_LOOKUP("xo",		pxo_clk.c,	"pil_modem"),
+	CLK_LOOKUP("vref_buff",		cxo_clk.c,	"rpm-regulator"),
 	CLK_LOOKUP("pll4",		pll4_clk.c,	"pil_qdsp6v3"),
 	CLK_LOOKUP("measure",		measure_clk.c,	"debug"),
 
@@ -3521,6 +3526,7 @@ static struct clk_lookup msm_clocks_8x60[] = {
 	CLK_LOOKUP("mem_a_clk",		ebi1_msmbus_a_clk.c, "msm_bus"),
 	CLK_LOOKUP("smi_clk",		smi_clk.c,	"msm_bus"),
 	CLK_LOOKUP("smi_a_clk",		smi_a_clk.c,	"msm_bus"),
+	CLK_LOOKUP("mmfpb_a_clk",	mmfpb_a_clk.c,	"clock-8x60"),
 
 	CLK_LOOKUP("core_clk",		gp0_clk.c,		""),
 	CLK_LOOKUP("core_clk",		gp1_clk.c,		""),
@@ -3722,6 +3728,8 @@ static struct clk_lookup msm_clocks_8x60[] = {
 	CLK_LOOKUP("vcodec_iommu0_clk", vcodec_axi_clk.c, "msm_vidc.0"),
 	CLK_LOOKUP("vcodec_iommu1_clk", vcodec_axi_clk.c, "msm_vidc.0"),
 	CLK_LOOKUP("smmu_iface_clk", smmu_p_clk.c,	"msm_vidc.0"),
+	CLK_LOOKUP("core_clk",		vcodec_axi_clk.c,  "pil_vidc"),
+	CLK_LOOKUP("smmu_iface_clk",	smmu_p_clk.c,  "pil_vidc"),
 
 	CLK_LOOKUP("dfab_dsps_clk",	dfab_dsps_clk.c, NULL),
 	CLK_LOOKUP("core_clk",		dfab_usb_hs_clk.c,	"msm_otg"),
@@ -3870,7 +3878,7 @@ static int __init msm8660_clock_late_init(void)
 	int rc;
 
 	/* Vote for MMFPB to be at least 64MHz when an Apps CPU is active. */
-	struct clk *mmfpb_a_clk = clk_get(NULL, "mmfpb_a_clk");
+	struct clk *mmfpb_a_clk = clk_get_sys("clock-8x60", "mmfpb_a_clk");
 	if (WARN(IS_ERR(mmfpb_a_clk), "mmfpb_a_clk not found (%ld)\n",
 			PTR_ERR(mmfpb_a_clk)))
 		return PTR_ERR(mmfpb_a_clk);

@@ -251,6 +251,7 @@ static struct mmc_platform_data sdc1_data = {
 	.pin_data	= &mmc_slot_pin_data[SDCC1],
 	.vreg_data	= &mmc_slot_vreg_data[SDCC1],
 	.uhs_caps	= MMC_CAP_1_8V_DDR | MMC_CAP_UHS_DDR50,
+	.uhs_caps2	= MMC_CAP2_HS200_1_8V_SDR,
 	.mpm_sdiowakeup_int = MSM_MPM_PIN_SDC1_DAT1,
 	.msm_bus_voting_data = &sps_to_ddr_bus_voting_data,
 };
@@ -330,21 +331,6 @@ static struct mmc_platform_data *apq8064_sdc4_pdata;
 
 void __init apq8064_init_mmc(void)
 {
-	if ((machine_is_apq8064_rumi3()) || machine_is_apq8064_sim()) {
-		if (apq8064_sdc1_pdata) {
-			if (machine_is_apq8064_sim())
-				apq8064_sdc1_pdata->disable_bam = true;
-			apq8064_sdc1_pdata->disable_runtime_pm = true;
-			apq8064_sdc1_pdata->disable_cmd23 = true;
-		}
-		if (apq8064_sdc3_pdata) {
-			if (machine_is_apq8064_sim())
-				apq8064_sdc3_pdata->disable_bam = true;
-			apq8064_sdc3_pdata->disable_runtime_pm = true;
-			apq8064_sdc3_pdata->disable_cmd23 = true;
-		}
-	}
-
 	if (apq8064_sdc1_pdata)
 		apq8064_add_sdcc(1, apq8064_sdc1_pdata);
 
@@ -352,6 +338,11 @@ void __init apq8064_init_mmc(void)
 		apq8064_add_sdcc(2, apq8064_sdc2_pdata);
 
 	if (apq8064_sdc3_pdata) {
+		if (machine_is_mpq8064_hrd() || machine_is_mpq8064_dtv()) {
+			apq8064_sdc3_pdata->uhs_caps &= ~(MMC_CAP_UHS_SDR12 |
+				MMC_CAP_UHS_SDR25 | MMC_CAP_UHS_DDR50 |
+				MMC_CAP_UHS_SDR50 | MMC_CAP_UHS_SDR104);
+		}
 		if (!machine_is_apq8064_cdp()) {
 			apq8064_sdc3_pdata->wpswitch_gpio = 0;
 			apq8064_sdc3_pdata->is_wpswitch_active_low = false;
@@ -381,6 +372,24 @@ void __init apq8064_init_mmc(void)
 				apq8064_sdc3_pdata->status_gpio = 0;
 				apq8064_sdc3_pdata->status_irq = 0;
 			}
+		}
+		if (machine_is_apq8064_cdp()) {
+			int i;
+
+			for (i = 0;
+			     i < apq8064_sdc3_pdata->pin_data->pad_data->\
+				 drv->size;
+			     i++)
+				apq8064_sdc3_pdata->pin_data->pad_data->\
+					drv->on[i].val = GPIO_CFG_10MA;
+		}
+		if (machine_is_mpq8064_hrd() || machine_is_mpq8064_dtv()) {
+			apq8064_sdc3_pdata->pin_data->pad_data->\
+				drv->on[0].val = GPIO_CFG_16MA;
+			apq8064_sdc3_pdata->pin_data->pad_data->\
+				drv->on[1].val = GPIO_CFG_10MA;
+			apq8064_sdc3_pdata->pin_data->pad_data->\
+				drv->on[2].val = GPIO_CFG_10MA;
 		}
 		apq8064_add_sdcc(3, apq8064_sdc3_pdata);
 	}

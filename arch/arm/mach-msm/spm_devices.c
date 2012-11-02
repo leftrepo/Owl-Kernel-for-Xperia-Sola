@@ -38,36 +38,77 @@ struct msm_spm_device {
 	uint32_t num_modes;
 };
 
+struct msm_spm_vdd_info {
+	uint32_t cpu;
+	uint32_t vlevel;
+	int err;
+};
+
 static struct msm_spm_device msm_spm_l2_device;
 static DEFINE_PER_CPU_SHARED_ALIGNED(struct msm_spm_device, msm_cpu_spm_device);
-static atomic_t msm_spm_set_vdd_x_cpu_allowed = ATOMIC_INIT(1);
 
-void msm_spm_allow_x_cpu_set_vdd(bool allowed)
+
+static void msm_spm_smp_set_vdd(void *data)
 {
-	atomic_set(&msm_spm_set_vdd_x_cpu_allowed, allowed ? 1 : 0);
-}
-EXPORT_SYMBOL(msm_spm_allow_x_cpu_set_vdd);
+	struct msm_spm_device *dev;
+	struct msm_spm_vdd_info *info = (struct msm_spm_vdd_info *)data;
 
+	dev = &per_cpu(msm_cpu_spm_device, info->cpu);
+	info->err = msm_spm_drv_set_vdd(&dev->reg_data, info->vlevel);
+}
+
+/**
+ * msm_spm_set_vdd(): Set core voltage
+ * @cpu: core id
+ * @vlevel: Encoded PMIC data.
+ */
 int msm_spm_set_vdd(unsigned int cpu, unsigned int vlevel)
 {
-	unsigned long flags;
-	struct msm_spm_device *dev;
-	int ret = -EIO;
+	struct msm_spm_vdd_info info;
+	int ret;
 
-	local_irq_save(flags);
-	if (!atomic_read(&msm_spm_set_vdd_x_cpu_allowed) &&
-				unlikely(smp_processor_id() != cpu)) {
-		goto set_vdd_x_cpu_bail;
+	info.cpu = cpu;
+	info.vlevel = vlevel;
+
+	if (cpu_online(cpu)) {
+		/**
+		 * We do not want to set the voltage of another core from
+		 * this core, as its possible that we may race the vdd change
+		 * with the SPM state machine of that core, which could also
+		 * be changing the voltage of that core during power collapse.
+		 * Hence, set the function to be executed on that core and block
+		 * until the vdd change is complete.
+		 */
+		ret = smp_call_function_single(cpu, msm_spm_smp_set_vdd,
+				&info, true);
+		if (!ret)
+			ret = info.err;
+	} else {
+		/**
+		 * Since the core is not online, it is safe to set the vdd
+		 * directly.
+		 */
+		msm_spm_smp_set_vdd(&info);
+		ret = info.err;
 	}
 
-	dev = &per_cpu(msm_cpu_spm_device, cpu);
-	ret = msm_spm_drv_set_vdd(&dev->reg_data, vlevel);
-
-set_vdd_x_cpu_bail:
-	local_irq_restore(flags);
 	return ret;
 }
 EXPORT_SYMBOL(msm_spm_set_vdd);
+
+/**
+ * msm_spm_get_vdd(): Get core voltage
+ * @cpu: core id
+ * @return: Returns encoded PMIC data.
+ */
+unsigned int msm_spm_get_vdd(unsigned int cpu)
+{
+	struct msm_spm_device *dev;
+
+	dev = &per_cpu(msm_cpu_spm_device, cpu);
+	return msm_spm_drv_get_sts_curr_pmic_data(&dev->reg_data);
+}
+EXPORT_SYMBOL(msm_spm_get_vdd);
 
 static int msm_spm_dev_set_low_power_mode(struct msm_spm_device *dev,
 		unsigned int mode, bool notify_rpm)
@@ -135,6 +176,10 @@ spm_failed_malloc:
 	return ret;
 }
 
+/**
+ * msm_spm_turn_on_cpu_rail(): Power on cpu rail before turning on core
+ * @cpu: core id
+ */
 int msm_spm_turn_on_cpu_rail(unsigned int cpu)
 {
 	uint32_t val = 0;
@@ -152,7 +197,8 @@ int msm_spm_turn_on_cpu_rail(unsigned int cpu)
 
 	reg = saw_bases[cpu];
 
-	if (cpu_is_msm8960() || cpu_is_msm8930() || cpu_is_apq8064()) {
+	if (soc_class_is_msm8960() || soc_class_is_msm8930() ||
+	    soc_class_is_apq8064()) {
 		val = 0xA4;
 		reg += 0x14;
 		timeout = 512;
@@ -176,6 +222,11 @@ void msm_spm_reinit(void)
 }
 EXPORT_SYMBOL(msm_spm_reinit);
 
+/**
+ * msm_spm_set_low_power_mode() - Configure SPM start address for low power mode
+ * @mode: SPM LPM mode to enter
+ * @notify_rpm: Notify RPM in this mode
+ */
 int msm_spm_set_low_power_mode(unsigned int mode, bool notify_rpm)
 {
 	struct msm_spm_device *dev = &__get_cpu_var(msm_cpu_spm_device);
@@ -183,7 +234,11 @@ int msm_spm_set_low_power_mode(unsigned int mode, bool notify_rpm)
 }
 EXPORT_SYMBOL(msm_spm_set_low_power_mode);
 
-/* Board file init function */
+/**
+ * msm_spm_init(): Board initalization function
+ * @data: platform specific SPM register configuration data
+ * @nr_devs: Number of SPM devices being initialized
+ */
 int __init msm_spm_init(struct msm_spm_platform_data *data, int nr_devs)
 {
 	unsigned int cpu;
@@ -206,6 +261,12 @@ int __init msm_spm_init(struct msm_spm_platform_data *data, int nr_devs)
 
 #ifdef CONFIG_MSM_L2_SPM
 
+/**
+ * msm_spm_l2_set_low_power_mode(): Configure L2 SPM start address
+ *                                  for low power mode
+ * @mode: SPM LPM mode to enter
+ * @notify_rpm: Notify RPM in this mode
+ */
 int msm_spm_l2_set_low_power_mode(unsigned int mode, bool notify_rpm)
 {
 	return msm_spm_dev_set_low_power_mode(
@@ -219,19 +280,42 @@ void msm_spm_l2_reinit(void)
 }
 EXPORT_SYMBOL(msm_spm_l2_reinit);
 
+/**
+ * msm_spm_apcs_set_vdd(): Set Apps processor core sub-system voltage
+ * @vlevel: Encoded PMIC data.
+ */
 int msm_spm_apcs_set_vdd(unsigned int vlevel)
 {
 	return msm_spm_drv_set_vdd(&msm_spm_l2_device.reg_data, vlevel);
 }
 EXPORT_SYMBOL(msm_spm_apcs_set_vdd);
 
+/**
+ * msm_spm_apcs_set_phase(): Set number of SMPS phases.
+ * phase_cnt: Number of phases to be set active
+ */
 int msm_spm_apcs_set_phase(unsigned int phase_cnt)
 {
-	return msm_spm_drv_set_phase(&msm_spm_l2_device.reg_data, phase_cnt);
+	return msm_spm_drv_set_pmic_data(&msm_spm_l2_device.reg_data,
+			MSM_SPM_PMIC_PHASE_PORT, phase_cnt);
 }
 EXPORT_SYMBOL(msm_spm_apcs_set_phase);
 
-/* Board file init function */
+/** msm_spm_enable_fts_lpm() : Enable FTS to switch to low power
+ *                             when the cores are in low power modes
+ * @mode: The mode configuration for FTS
+ */
+int msm_spm_enable_fts_lpm(uint32_t mode)
+{
+	return msm_spm_drv_set_pmic_data(&msm_spm_l2_device.reg_data,
+			MSM_SPM_PMIC_PFM_PORT, mode);
+}
+EXPORT_SYMBOL(msm_spm_enable_fts_lpm);
+
+/**
+ * msm_spm_l2_init(): Board initialization function
+ * @data: SPM target specific register configuration
+ */
 int __init msm_spm_l2_init(struct msm_spm_platform_data *data)
 {
 	return msm_spm_dev_init(&msm_spm_l2_device, data);
@@ -262,10 +346,10 @@ static int __devinit msm_spm_dev_probe(struct platform_device *pdev)
 		{"qcom,saw2-cfg", MSM_SPM_REG_SAW2_CFG},
 		{"qcom,saw2-avs-ctl", MSM_SPM_REG_SAW2_AVS_CTL},
 		{"qcom,saw2-avs-hysteresis", MSM_SPM_REG_SAW2_AVS_HYSTERESIS},
-		{"qcom,saw2-spm-ctl", MSM_SPM_REG_SAW2_SPM_CTL},
-		{"qcom,saw2-pmic-dly", MSM_SPM_REG_SAW2_PMIC_DLY},
 		{"qcom,saw2-avs-limit", MSM_SPM_REG_SAW2_AVS_LIMIT},
+		{"qcom,saw2-avs-dly", MSM_SPM_REG_SAW2_AVS_DLY},
 		{"qcom,saw2-spm-dly", MSM_SPM_REG_SAW2_SPM_DLY},
+		{"qcom,saw2-spm-ctl", MSM_SPM_REG_SAW2_SPM_CTL},
 		{"qcom,saw2-pmic-data0", MSM_SPM_REG_SAW2_PMIC_DATA_0},
 		{"qcom,saw2-pmic-data1", MSM_SPM_REG_SAW2_PMIC_DATA_1},
 		{"qcom,saw2-pmic-data2", MSM_SPM_REG_SAW2_PMIC_DATA_2},
@@ -328,25 +412,6 @@ static int __devinit msm_spm_dev_probe(struct platform_device *pdev)
 	if (!ret)
 		spm_data.vctl_timeout_us = val;
 
-	/* optional */
-	key = "qcom,vctl-port";
-	ret = of_property_read_u32(node, key, &val);
-	if (!ret)
-		spm_data.vctl_port = val;
-
-	/* optional */
-	key = "qcom,phase-port";
-	ret = of_property_read_u32(node, key, &val);
-	if (!ret)
-		spm_data.phase_port = val;
-
-	for (i = 0; i < ARRAY_SIZE(spm_of_data); i++) {
-		ret = of_property_read_u32(node, spm_of_data[i].key, &val);
-		if (ret)
-			continue;
-		spm_data.reg_init_values[spm_of_data[i].id] = val;
-	}
-
 	/*
 	 * Device with id 0..NR_CPUS are SPM for apps cores
 	 * Device with id 0xFFFF is for L2 SPM.
@@ -360,6 +425,35 @@ static int __devinit msm_spm_dev_probe(struct platform_device *pdev)
 		mode_of_data = of_l2_modes;
 		num_modes = ARRAY_SIZE(of_l2_modes);
 		dev = &msm_spm_l2_device;
+	}
+
+	spm_data.vctl_port = -1;
+	spm_data.phase_port = -1;
+	spm_data.pfm_port = -1;
+
+	/* optional */
+	if (dev == &msm_spm_l2_device) {
+		key = "qcom,vctl-port";
+		ret = of_property_read_u32(node, key, &val);
+		if (!ret)
+			spm_data.vctl_port = val;
+
+		key = "qcom,phase-port";
+		ret = of_property_read_u32(node, key, &val);
+		if (!ret)
+			spm_data.phase_port = val;
+
+		key = "qcom,pfm-port";
+		ret = of_property_read_u32(node, key, &val);
+		if (!ret)
+			spm_data.pfm_port = val;
+	}
+
+	for (i = 0; i < ARRAY_SIZE(spm_of_data); i++) {
+		ret = of_property_read_u32(node, spm_of_data[i].key, &val);
+		if (ret)
+			continue;
+		spm_data.reg_init_values[spm_of_data[i].id] = val;
 	}
 
 	for (i = 0; i < num_modes; i++) {
@@ -403,6 +497,9 @@ static struct platform_driver msm_spm_device_driver = {
 	},
 };
 
+/**
+ * msm_spm_device_init(): Device tree initialization function
+ */
 int __init msm_spm_device_init(void)
 {
 	return platform_driver_register(&msm_spm_device_driver);

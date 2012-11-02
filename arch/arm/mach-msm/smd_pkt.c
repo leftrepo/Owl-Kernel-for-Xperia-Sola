@@ -34,15 +34,17 @@
 #include <linux/wakelock.h>
 
 #include <mach/msm_smd.h>
-#include <mach/peripheral-loader.h>
+#include <mach/subsystem_restart.h>
+#include <mach/msm_ipc_logging.h>
 
 #include "smd_private.h"
 #ifdef CONFIG_ARCH_FSM9XXX
 #define NUM_SMD_PKT_PORTS 4
 #else
-#define NUM_SMD_PKT_PORTS 15
+#define NUM_SMD_PKT_PORTS 24
 #endif
 
+#define PDRIVER_NAME_MAX_SIZE 32
 #define LOOPBACK_INX (NUM_SMD_PKT_PORTS - 1)
 
 #define DEVICE_NAME "smdpkt"
@@ -52,6 +54,7 @@ struct smd_pkt_dev {
 	struct cdev cdev;
 	struct device *devicep;
 	void *pil;
+	char pdriver_name[PDRIVER_NAME_MAX_SIZE];
 	struct platform_driver driver;
 
 	struct smd_channel *ch;
@@ -63,6 +66,7 @@ struct smd_pkt_dev {
 	wait_queue_head_t ch_opened_wait_queue;
 
 	int i;
+	int ref_cnt;
 
 	int blocking_write;
 	int is_open;
@@ -86,6 +90,9 @@ static void check_and_wakeup_reader(struct smd_pkt_dev *smd_pkt_devp);
 static void check_and_wakeup_writer(struct smd_pkt_dev *smd_pkt_devp);
 static uint32_t is_modem_smsm_inited(void);
 
+#define SMD_PKT_IPC_LOG_PAGE_CNT 2
+static void *smd_pkt_ilctxt;
+
 static int msm_smd_pkt_debug_mask;
 module_param_named(debug_mask, msm_smd_pkt_debug_mask,
 		int, S_IRUGO | S_IWUSR | S_IWGRP);
@@ -102,22 +109,44 @@ enum {
 #define DEBUG
 
 #ifdef DEBUG
+
+#define SMD_PKT_LOG_STRING(x...) \
+do { \
+	if (smd_pkt_ilctxt) \
+		ipc_log_string(smd_pkt_ilctxt, "<SMD_PKT>: "x); \
+} while (0)
+
+#define SMD_PKT_LOG_BUF(buf, cnt) \
+do { \
+	char log_buf[128]; \
+	int i; \
+	if (smd_pkt_ilctxt) { \
+		i = cnt < 16 ? cnt : 16; \
+		hex_dump_to_buffer(buf, i, 16, 1, log_buf, \
+				   sizeof(log_buf), false); \
+		ipc_log_string(smd_pkt_ilctxt, "<SMD_PKT>: %s", log_buf); \
+	} \
+} while (0)
+
 #define D_STATUS(x...) \
 do { \
 	if (msm_smd_pkt_debug_mask & SMD_PKT_STATUS) \
 		pr_info("Status: "x); \
+	SMD_PKT_LOG_STRING(x); \
 } while (0)
 
 #define D_READ(x...) \
 do { \
 	if (msm_smd_pkt_debug_mask & SMD_PKT_READ) \
 		pr_info("Read: "x); \
+	SMD_PKT_LOG_STRING(x); \
 } while (0)
 
 #define D_WRITE(x...) \
 do { \
 	if (msm_smd_pkt_debug_mask & SMD_PKT_WRITE) \
 		pr_info("Write: "x); \
+	SMD_PKT_LOG_STRING(x); \
 } while (0)
 
 #define D_READ_DUMP_BUFFER(prestr, cnt, buf) \
@@ -126,6 +155,7 @@ do { \
 		print_hex_dump(KERN_INFO, prestr, \
 			       DUMP_PREFIX_NONE, 16, 1, \
 			       buf, cnt, 1); \
+	SMD_PKT_LOG_BUF(buf, cnt); \
 } while (0)
 
 #define D_WRITE_DUMP_BUFFER(prestr, cnt, buf) \
@@ -134,12 +164,21 @@ do { \
 		print_hex_dump(KERN_INFO, prestr, \
 			       DUMP_PREFIX_NONE, 16, 1, \
 			       buf, cnt, 1); \
+	SMD_PKT_LOG_BUF(buf, cnt); \
 } while (0)
 
 #define D_POLL(x...) \
 do { \
 	if (msm_smd_pkt_debug_mask & SMD_PKT_POLL) \
 		pr_info("Poll: "x); \
+	SMD_PKT_LOG_STRING(x); \
+} while (0)
+
+#define E_SMD_PKT_SSR(x) \
+do { \
+	if (x->do_reset_notification) \
+		pr_err("%s notifying reset for smd_pkt_dev id:%d\n", \
+			__func__, x->i); \
 } while (0)
 #else
 #define D_STATUS(x...) do {} while (0)
@@ -148,6 +187,7 @@ do { \
 #define D_READ_DUMP_BUFFER(prestr, cnt, buf) do {} while (0)
 #define D_WRITE_DUMP_BUFFER(prestr, cnt, buf) do {} while (0)
 #define D_POLL(x...) do {} while (0)
+#define E_SMD_PKT_SSR(x) do {} while (0)
 #endif
 
 static ssize_t open_timeout_store(struct device *d,
@@ -260,6 +300,7 @@ static long smd_pkt_ioctl(struct file *file, unsigned int cmd,
 	if (!smd_pkt_devp)
 		return -EINVAL;
 
+	mutex_lock(&smd_pkt_devp->ch_lock);
 	switch (cmd) {
 	case TIOCMGET:
 		D_STATUS("%s TIOCMGET command on smd_pkt_dev id:%d\n",
@@ -278,6 +319,7 @@ static long smd_pkt_ioctl(struct file *file, unsigned int cmd,
 		pr_err("%s: Unrecognized ioctl command %d\n", __func__, cmd);
 		ret = -1;
 	}
+	mutex_unlock(&smd_pkt_devp->ch_lock);
 
 	return ret;
 }
@@ -308,8 +350,7 @@ ssize_t smd_pkt_read(struct file *file,
 
 	if (smd_pkt_devp->do_reset_notification) {
 		/* notify client that a reset occurred */
-		pr_err("%s notifying reset for smd_pkt_dev id:%d\n",
-			__func__, smd_pkt_devp->i);
+		E_SMD_PKT_SSR(smd_pkt_devp);
 		return notify_reset(smd_pkt_devp);
 	}
 	D_READ("Begin %s on smd_pkt_dev id:%d buffer_size %d\n",
@@ -325,8 +366,7 @@ wait_for_packet:
 	mutex_lock(&smd_pkt_devp->rx_lock);
 	if (smd_pkt_devp->has_reset) {
 		mutex_unlock(&smd_pkt_devp->rx_lock);
-		pr_err("%s notifying reset for smd_pkt_dev id:%d\n",
-			__func__, smd_pkt_devp->i);
+		E_SMD_PKT_SSR(smd_pkt_devp);
 		return notify_reset(smd_pkt_devp);
 	}
 
@@ -375,8 +415,7 @@ wait_for_packet:
 		if (r < 0) {
 			mutex_unlock(&smd_pkt_devp->rx_lock);
 			if (smd_pkt_devp->has_reset) {
-				pr_err("%s notifying reset for smd_pkt_dev"
-				       " id:%d\n", __func__, smd_pkt_devp->i);
+				E_SMD_PKT_SSR(smd_pkt_devp);
 				return notify_reset(smd_pkt_devp);
 			}
 			pr_err("%s Error while reading %d\n", __func__, r);
@@ -389,8 +428,7 @@ wait_for_packet:
 				   smd_pkt_devp->has_reset);
 		if (smd_pkt_devp->has_reset) {
 			mutex_unlock(&smd_pkt_devp->rx_lock);
-			pr_err("%s notifying reset for smd_pkt_dev  id:%d\n",
-				__func__, smd_pkt_devp->i);
+			E_SMD_PKT_SSR(smd_pkt_devp);
 			return notify_reset(smd_pkt_devp);
 		}
 	} while (pkt_size != bytes_read);
@@ -442,8 +480,7 @@ ssize_t smd_pkt_write(struct file *file,
 	}
 
 	if (smd_pkt_devp->do_reset_notification || smd_pkt_devp->has_reset) {
-		pr_err("%s notifying reset for smd_pkt_dev id:%d\n",
-			__func__, smd_pkt_devp->i);
+		E_SMD_PKT_SSR(smd_pkt_devp);
 		/* notify client that a reset occurred */
 		return notify_reset(smd_pkt_devp);
 	}
@@ -482,8 +519,7 @@ ssize_t smd_pkt_write(struct file *file,
 
 		if (smd_pkt_devp->has_reset) {
 			mutex_unlock(&smd_pkt_devp->tx_lock);
-			pr_err("%s notifying reset for smd_pkt_dev id:%d\n",
-				__func__, smd_pkt_devp->i);
+			E_SMD_PKT_SSR(smd_pkt_devp);
 			return notify_reset(smd_pkt_devp);
 		} else {
 			r = smd_write_segment(smd_pkt_devp->ch,
@@ -492,9 +528,7 @@ ssize_t smd_pkt_write(struct file *file,
 			if (r < 0) {
 				mutex_unlock(&smd_pkt_devp->tx_lock);
 				if (smd_pkt_devp->has_reset) {
-					pr_err("%s notifying reset for"
-					       " smd_pkt_dev id:%d\n",
-						__func__, smd_pkt_devp->i);
+					E_SMD_PKT_SSR(smd_pkt_devp);
 					return notify_reset(smd_pkt_devp);
 				}
 				pr_err("%s on smd_pkt_dev id:%d failed r:%d\n",
@@ -530,8 +564,6 @@ static unsigned int smd_pkt_poll(struct file *file, poll_table *wait)
 	mutex_lock(&smd_pkt_devp->ch_lock);
 	if (smd_pkt_devp->has_reset || !smd_pkt_devp->ch) {
 		mutex_unlock(&smd_pkt_devp->ch_lock);
-		pr_err("%s notifying reset for smd_pkt_dev id:%d\n",
-			__func__, smd_pkt_devp->i);
 		return POLLERR;
 	}
 
@@ -679,6 +711,15 @@ static char *smd_pkt_dev_name[] = {
 	"smdcntl6",
 	"smdcntl7",
 	"smd22",
+	"smdcnt_rev0",
+	"smdcnt_rev1",
+	"smdcnt_rev2",
+	"smdcnt_rev3",
+	"smdcnt_rev4",
+	"smdcnt_rev5",
+	"smdcnt_rev6",
+	"smdcnt_rev7",
+	"smdcnt_rev8",
 	"smd_sns_dsps",
 	"apr_apps2",
 	"smdcntl8",
@@ -697,6 +738,15 @@ static char *smd_ch_name[] = {
 	"DATA13_CNTL",
 	"DATA14_CNTL",
 	"DATA22",
+	"DATA23_CNTL",
+	"DATA24_CNTL",
+	"DATA25_CNTL",
+	"DATA26_CNTL",
+	"DATA27_CNTL",
+	"DATA28_CNTL",
+	"DATA29_CNTL",
+	"DATA30_CNTL",
+	"DATA31_CNTL",
 	"SENSOR",
 	"apr_apps2",
 	"DATA40_CNTL",
@@ -715,6 +765,15 @@ static uint32_t smd_ch_edge[] = {
 	SMD_APPS_MODEM,
 	SMD_APPS_MODEM,
 	SMD_APPS_MODEM,
+	SMD_APPS_MODEM,
+	SMD_APPS_MODEM,
+	SMD_APPS_MODEM,
+	SMD_APPS_MODEM,
+	SMD_APPS_MODEM,
+	SMD_APPS_MODEM,
+	SMD_APPS_MODEM,
+	SMD_APPS_MODEM,
+	SMD_APPS_MODEM,
 	SMD_APPS_DSPS,
 	SMD_APPS_QDSP,
 	SMD_APPS_MODEM,
@@ -723,13 +782,18 @@ static uint32_t smd_ch_edge[] = {
 	SMD_APPS_MODEM,
 };
 #endif
+module_param_named(loopback_edge, smd_ch_edge[LOOPBACK_INX],
+		int, S_IRUGO | S_IWUSR | S_IWGRP);
 
 static int smd_pkt_dummy_probe(struct platform_device *pdev)
 {
 	int i;
 
 	for (i = 0; i < NUM_SMD_PKT_PORTS; i++) {
-		if (!strncmp(pdev->name, smd_ch_name[i], SMD_MAX_CH_NAME_LEN)) {
+		if (smd_ch_edge[i] == pdev->id
+		    && !strncmp(pdev->name, smd_ch_name[i],
+				SMD_MAX_CH_NAME_LEN)
+		    && smd_pkt_devp[i]->driver.probe) {
 			complete_all(&smd_pkt_devp[i]->ch_allocated);
 			D_STATUS("%s allocated SMD ch for smd_pkt_dev id:%d\n",
 				 __func__, i);
@@ -762,18 +826,19 @@ int smd_pkt_open(struct inode *inode, struct file *file)
 	}
 	D_STATUS("Begin %s on smd_pkt_dev id:%d\n", __func__, smd_pkt_devp->i);
 
-	wake_lock_init(&smd_pkt_devp->pa_wake_lock, WAKE_LOCK_SUSPEND,
-			smd_pkt_dev_name[smd_pkt_devp->i]);
-	INIT_WORK(&smd_pkt_devp->packet_arrival_work, packet_arrival_worker);
-
 	file->private_data = smd_pkt_devp;
 
 	mutex_lock(&smd_pkt_devp->ch_lock);
 	if (smd_pkt_devp->ch == 0) {
+		wake_lock_init(&smd_pkt_devp->pa_wake_lock, WAKE_LOCK_SUSPEND,
+				smd_pkt_dev_name[smd_pkt_devp->i]);
+		INIT_WORK(&smd_pkt_devp->packet_arrival_work,
+				packet_arrival_worker);
 		init_completion(&smd_pkt_devp->ch_allocated);
 		smd_pkt_devp->driver.probe = smd_pkt_dummy_probe;
-		smd_pkt_devp->driver.driver.name =
-			smd_ch_name[smd_pkt_devp->i];
+		scnprintf(smd_pkt_devp->pdriver_name, PDRIVER_NAME_MAX_SIZE,
+			  "%s", smd_ch_name[smd_pkt_devp->i]);
+		smd_pkt_devp->driver.driver.name = smd_pkt_devp->pdriver_name;
 		smd_pkt_devp->driver.driver.owner = THIS_MODULE;
 		r = platform_driver_register(&smd_pkt_devp->driver);
 		if (r) {
@@ -785,12 +850,11 @@ int smd_pkt_open(struct inode *inode, struct file *file)
 		peripheral = smd_edge_to_subsystem(
 				smd_ch_edge[smd_pkt_devp->i]);
 		if (peripheral) {
-			smd_pkt_devp->pil = pil_get(peripheral);
+			smd_pkt_devp->pil = subsystem_get(peripheral);
 			if (IS_ERR(smd_pkt_devp->pil)) {
 				r = PTR_ERR(smd_pkt_devp->pil);
-				pr_err("%s failed on smd_pkt_dev id:%d -"
-				       " pil_get failed for %s\n", __func__,
-					smd_pkt_devp->i, peripheral);
+				pr_err("%s failed on smd_pkt_dev id:%d - subsystem_get failed for %s\n",
+					__func__, smd_pkt_devp->i, peripheral);
 				goto release_pd;
 			}
 
@@ -861,22 +925,28 @@ int smd_pkt_open(struct inode *inode, struct file *file)
 			smd_pkt_devp->ch_size =
 				smd_write_avail(smd_pkt_devp->ch);
 			r = 0;
+			smd_pkt_devp->ref_cnt++;
 			D_STATUS("Finished %s on smd_pkt_dev id:%d\n",
 				 __func__, smd_pkt_devp->i);
 		}
+	} else {
+		smd_pkt_devp->ref_cnt++;
 	}
 release_pil:
 	if (peripheral && (r < 0))
-		pil_put(smd_pkt_devp->pil);
+		subsystem_put(smd_pkt_devp->pil);
 
 release_pd:
-	if (r < 0)
+	if (r < 0) {
 		platform_driver_unregister(&smd_pkt_devp->driver);
+		smd_pkt_devp->driver.probe = NULL;
+	}
 out:
+	if (!smd_pkt_devp->ch)
+		wake_lock_destroy(&smd_pkt_devp->pa_wake_lock);
+
 	mutex_unlock(&smd_pkt_devp->ch_lock);
 
-	if (r < 0)
-		wake_lock_destroy(&smd_pkt_devp->pa_wake_lock);
 
 	return r;
 }
@@ -893,28 +963,31 @@ int smd_pkt_release(struct inode *inode, struct file *file)
 	D_STATUS("Begin %s on smd_pkt_dev id:%d\n",
 		 __func__, smd_pkt_devp->i);
 
-	clean_and_signal(smd_pkt_devp);
-
 	mutex_lock(&smd_pkt_devp->ch_lock);
 	mutex_lock(&smd_pkt_devp->rx_lock);
 	mutex_lock(&smd_pkt_devp->tx_lock);
-	if (smd_pkt_devp->ch != 0) {
+	if (smd_pkt_devp->ref_cnt > 0)
+		smd_pkt_devp->ref_cnt--;
+
+	if (smd_pkt_devp->ch != 0 && smd_pkt_devp->ref_cnt == 0) {
+		clean_and_signal(smd_pkt_devp);
 		r = smd_close(smd_pkt_devp->ch);
 		smd_pkt_devp->ch = 0;
 		smd_pkt_devp->blocking_write = 0;
 		smd_pkt_devp->poll_mode = 0;
 		platform_driver_unregister(&smd_pkt_devp->driver);
+		smd_pkt_devp->driver.probe = NULL;
 		if (smd_pkt_devp->pil)
-			pil_put(smd_pkt_devp->pil);
+			subsystem_put(smd_pkt_devp->pil);
+		smd_pkt_devp->has_reset = 0;
+		smd_pkt_devp->do_reset_notification = 0;
+		smd_pkt_devp->wakelock_locked = 0;
+		wake_lock_destroy(&smd_pkt_devp->pa_wake_lock);
 	}
 	mutex_unlock(&smd_pkt_devp->tx_lock);
 	mutex_unlock(&smd_pkt_devp->rx_lock);
 	mutex_unlock(&smd_pkt_devp->ch_lock);
 
-	smd_pkt_devp->has_reset = 0;
-	smd_pkt_devp->do_reset_notification = 0;
-	smd_pkt_devp->wakelock_locked = 0;
-	wake_lock_destroy(&smd_pkt_devp->pa_wake_lock);
 	D_STATUS("Finished %s on smd_pkt_dev id:%d\n",
 		 __func__, smd_pkt_devp->i);
 
@@ -1013,6 +1086,9 @@ static int __init smd_pkt_init(void)
 	}
 
 	INIT_DELAYED_WORK(&loopback_work, loopback_probe_worker);
+
+	smd_pkt_ilctxt = ipc_log_context_create(SMD_PKT_IPC_LOG_PAGE_CNT,
+						"smd_pkt");
 
 	D_STATUS("SMD Packet Port Driver Initialized.\n");
 	return 0;

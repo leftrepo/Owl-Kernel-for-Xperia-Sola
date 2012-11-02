@@ -65,6 +65,7 @@ extern struct msm_bus_fabric_registration msm_bus_def_fab_pdata;
 extern struct msm_bus_fabric_registration msm_bus_8960_apps_fabric_pdata;
 extern struct msm_bus_fabric_registration msm_bus_8960_sys_fabric_pdata;
 extern struct msm_bus_fabric_registration msm_bus_8960_mm_fabric_pdata;
+extern struct msm_bus_fabric_registration msm_bus_8960_sg_mm_fabric_pdata;
 extern struct msm_bus_fabric_registration msm_bus_8960_sys_fpb_pdata;
 extern struct msm_bus_fabric_registration msm_bus_8960_cpss_fpb_pdata;
 
@@ -82,6 +83,19 @@ extern struct msm_bus_fabric_registration msm_bus_8930_sys_fabric_pdata;
 extern struct msm_bus_fabric_registration msm_bus_8930_mm_fabric_pdata;
 extern struct msm_bus_fabric_registration msm_bus_8930_sys_fpb_pdata;
 extern struct msm_bus_fabric_registration msm_bus_8930_cpss_fpb_pdata;
+
+extern struct msm_bus_fabric_registration msm_bus_8974_sys_noc_pdata;
+extern struct msm_bus_fabric_registration msm_bus_8974_mmss_noc_pdata;
+extern struct msm_bus_fabric_registration msm_bus_8974_bimc_pdata;
+extern struct msm_bus_fabric_registration msm_bus_8974_ocmem_noc_pdata;
+extern struct msm_bus_fabric_registration msm_bus_8974_periph_noc_pdata;
+extern struct msm_bus_fabric_registration msm_bus_8974_config_noc_pdata;
+extern struct msm_bus_fabric_registration msm_bus_8974_ocmem_vnoc_pdata;
+
+extern struct msm_bus_fabric_registration msm_bus_9625_sys_noc_pdata;
+extern struct msm_bus_fabric_registration msm_bus_9625_bimc_pdata;
+extern struct msm_bus_fabric_registration msm_bus_9625_periph_noc_pdata;
+extern struct msm_bus_fabric_registration msm_bus_9625_config_noc_pdata;
 
 void msm_bus_rpm_set_mt_mask(void);
 int msm_bus_board_rpm_get_il_ids(uint16_t *id);
@@ -147,6 +161,20 @@ int msm_bus_board_get_iid(int id);
 		MSM_BUS_CLK_HALT_FIELDSIZE), \
 		MSM_BUS_CLK_UNHALT<<MSM_BUS_MASTER_SHIFT((master),\
 		MSM_BUS_CLK_HALT_FIELDSIZE))\
+
+#define RPM_BUS_SLAVE_REQ	0x766c7362
+#define RPM_BUS_MASTER_REQ	0x73616d62
+
+enum msm_bus_rpm_slave_field_type {
+	RPM_SLAVE_FIELD_BW = 0x00007762,
+};
+
+enum msm_bus_rpm_mas_field_type {
+	RPM_MASTER_FIELD_BW =		0x00007762,
+	RPM_MASTER_FIELD_BW_T0 =	0x30747762,
+	RPM_MASTER_FIELD_BW_T1 =	0x31747762,
+	RPM_MASTER_FIELD_BW_T2 =	0x32747762,
+};
 
 /* Topology related enums */
 enum msm_bus_fabric_type {
@@ -268,8 +296,10 @@ enum msm_bus_fabric_master_type {
 	MSM_BUS_MASTER_USB_HS,
 	MSM_BUS_MASTER_PNOC_CFG,
 	MSM_BUS_MASTER_V_OCMEM_GFX3D,
+	MSM_BUS_MASTER_IPA,
+	MSM_BUS_MASTER_QPIC,
 
-	MSM_BUS_MASTER_LAST = MSM_BUS_MASTER_V_OCMEM_GFX3D,
+	MSM_BUS_MASTER_LAST = MSM_BUS_MASTER_QPIC,
 
 	MSM_BUS_SYSTEM_FPB_MASTER_SYSTEM =
 		MSM_BUS_SYSTEM_MASTER_SYSTEM_FPB,
@@ -423,8 +453,10 @@ enum msm_bus_fabric_slave_type {
 	MSM_BUS_SLAVE_PHY_APU_CFG,
 	MSM_BUS_SLAVE_EBI1_PHY_CFG,
 	MSM_BUS_SLAVE_SERVICE_CNOC,
+	MSM_BUS_SLAVE_IPS_CFG,
+	MSM_BUS_SLAVE_QPIC,
 
-	MSM_BUS_SLAVE_LAST = MSM_BUS_SLAVE_SERVICE_CNOC,
+	MSM_BUS_SLAVE_LAST = MSM_BUS_SLAVE_QPIC,
 
 	MSM_BUS_SYSTEM_FPB_SLAVE_SYSTEM =
 		MSM_BUS_SYSTEM_SLAVE_SYSTEM_FPB,

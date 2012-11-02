@@ -20,7 +20,6 @@
 #include <linux/mtd/nand.h>
 #include <linux/mtd/partitions.h>
 #include <linux/i2c.h>
-#include <linux/android_pmem.h>
 #include <linux/bootmem.h>
 #include <linux/mfd/marimba.h>
 #include <linux/power_supply.h>
@@ -31,8 +30,10 @@
 #include <linux/memblock.h>
 #include <linux/input/ft5x06_ts.h>
 #include <linux/msm_adc.h>
-#include <linux/fmem.h>
 #include <linux/regulator/msm-gpio-regulator.h>
+#include <linux/msm_ion.h>
+#include <linux/i2c-gpio.h>
+#include <linux/regulator/onsemi-ncp6335d.h>
 #include <asm/mach/mmc.h>
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
@@ -61,8 +62,8 @@
 #include "board-msm7x27a-regulator.h"
 #include "board-msm7627a.h"
 
-#define PMEM_KERNEL_EBI1_SIZE	0x3A000
-#define MSM_PMEM_AUDIO_SIZE	0x1F4000
+#define RESERVE_KERNEL_EBI1_SIZE	0x3A000
+#define MSM_RESERVE_AUDIO_SIZE	0x1F4000
 #define BAHAMA_SLAVE_ID_FM_REG 0x02
 #define FM_GPIO	83
 #define BT_PCM_BCLK_MODE  0x88
@@ -74,6 +75,7 @@
 #define FM_I2S_SCK_MODE   0x90
 #define I2C_PIN_CTL       0x15
 #define I2C_NORMAL        0x40
+
 
 static struct platform_device msm_wlan_ar6000_pm_device = {
 	.name           = "wlan_ar6000_pm_dev",
@@ -128,13 +130,45 @@ static struct msm_i2c_platform_data msm_gsbi1_qup_i2c_pdata = {
 	.msm_i2c_config_gpio	= gsbi_qup_i2c_gpio_config,
 };
 
+static struct msm_gpio i2c_gpio_config[] = {
+	{ GPIO_CFG(39, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_8MA),
+		"qup_scl" },
+	{ GPIO_CFG(36, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_8MA),
+		"qup_sda" },
+};
+
+static struct i2c_gpio_platform_data i2c_gpio_pdata = {
+	.scl_pin = 39,
+	.sda_pin = 36,
+	.udelay = 5, /* 100 Khz */
+};
+
+static struct platform_device msm_i2c_gpio = {
+	.name	= "i2c-gpio",
+	.id	= 2,
+	.dev	= {
+		.platform_data = &i2c_gpio_pdata,
+	}
+};
+
 #ifdef CONFIG_ARCH_MSM7X27A
-#define MSM_PMEM_MDP_SIZE       0x2300000
-#define MSM_PMEM_ADSP_SIZE      0x1200000
+
+#define MSM_RESERVE_MDP_SIZE       0x1B00000
+#define MSM_RESERVE_ADSP_SIZE      0x1200000
+#define CAMERA_ZSL_SIZE            (SZ_1M * 60)
+
+#ifdef CONFIG_ION_MSM
+#define MSM_ION_HEAP_NUM	4
+static struct platform_device ion_dev;
+static int msm_ion_camera_size;
+static int msm_ion_audio_size;
+static int msm_ion_sf_size;
+#endif
 #endif
 
 static struct android_usb_platform_data android_usb_pdata = {
 	.update_pid_and_serial_num = usb_diag_update_pid_and_serial_num,
+	.cdrom = 1,
 };
 
 static struct platform_device android_usb_device = {
@@ -265,6 +299,7 @@ static struct msm_otg_platform_data msm_otg_pdata = {
 
 static struct msm_hsusb_gadget_platform_data msm_gadget_pdata = {
 	.is_phy_status_timer_on = 1,
+	.prop_chg = 0,
 };
 
 #ifdef CONFIG_SERIAL_MSM_HS
@@ -314,7 +349,8 @@ static struct msm_pm_boot_platform_data msm_pm_boot_pdata __initdata = {
 };
 
 /* 8625 PM platform data */
-static struct msm_pm_platform_data msm8625_pm_data[MSM_PM_SLEEP_MODE_NR * 2] = {
+static struct msm_pm_platform_data
+		msm8625_pm_data[MSM_PM_SLEEP_MODE_NR * CONFIG_NR_CPUS] = {
 	/* CORE0 entries */
 	[MSM_PM_MODE(0, MSM_PM_SLEEP_MODE_POWER_COLLAPSE)] = {
 					.idle_supported = 1,
@@ -372,6 +408,44 @@ static struct msm_pm_platform_data msm8625_pm_data[MSM_PM_SLEEP_MODE_NR * 2] = {
 					.residency = 10,
 	},
 
+	/* picked latency & redisdency values from 7x30 */
+	[MSM_PM_MODE(2, MSM_PM_SLEEP_MODE_POWER_COLLAPSE_STANDALONE)] = {
+					.idle_supported = 1,
+					.suspend_supported = 1,
+					.idle_enabled = 0,
+					.suspend_enabled = 0,
+					.latency = 500,
+					.residency = 6000,
+	},
+
+	[MSM_PM_MODE(2, MSM_PM_SLEEP_MODE_WAIT_FOR_INTERRUPT)] = {
+					.idle_supported = 1,
+					.suspend_supported = 1,
+					.idle_enabled = 1,
+					.suspend_enabled = 1,
+					.latency = 2,
+					.residency = 10,
+	},
+
+	/* picked latency & redisdency values from 7x30 */
+	[MSM_PM_MODE(3, MSM_PM_SLEEP_MODE_POWER_COLLAPSE_STANDALONE)] = {
+					.idle_supported = 1,
+					.suspend_supported = 1,
+					.idle_enabled = 0,
+					.suspend_enabled = 0,
+					.latency = 500,
+					.residency = 6000,
+	},
+
+	[MSM_PM_MODE(3, MSM_PM_SLEEP_MODE_WAIT_FOR_INTERRUPT)] = {
+					.idle_supported = 1,
+					.suspend_supported = 1,
+					.idle_enabled = 1,
+					.suspend_enabled = 1,
+					.latency = 2,
+					.residency = 10,
+	},
+
 };
 
 static struct msm_pm_boot_platform_data msm_pm_8625_boot_pdata __initdata = {
@@ -379,213 +453,30 @@ static struct msm_pm_boot_platform_data msm_pm_8625_boot_pdata __initdata = {
 	.v_addr = MSM_CFG_CTL_BASE,
 };
 
-static struct android_pmem_platform_data android_pmem_adsp_pdata = {
-	.name = "pmem_adsp",
-	.allocator_type = PMEM_ALLOCATORTYPE_BITMAP,
-	.cached = 1,
-	.memory_type = MEMTYPE_EBI1,
-	.request_region = request_fmem_c_region,
-	.release_region = release_fmem_c_region,
-	.reusable = 1,
-};
-
-static struct platform_device android_pmem_adsp_device = {
-	.name = "android_pmem",
-	.id = 1,
-	.dev = { .platform_data = &android_pmem_adsp_pdata },
-};
-
-static unsigned pmem_mdp_size = MSM_PMEM_MDP_SIZE;
-static int __init pmem_mdp_size_setup(char *p)
+static unsigned reserve_mdp_size = MSM_RESERVE_MDP_SIZE;
+static int __init reserve_mdp_size_setup(char *p)
 {
-	pmem_mdp_size = memparse(p, NULL);
+	reserve_mdp_size = memparse(p, NULL);
 	return 0;
 }
 
-early_param("pmem_mdp_size", pmem_mdp_size_setup);
+early_param("reserve_mdp_size", reserve_mdp_size_setup);
 
-static unsigned pmem_adsp_size = MSM_PMEM_ADSP_SIZE;
-static int __init pmem_adsp_size_setup(char *p)
+static unsigned reserve_adsp_size = MSM_RESERVE_ADSP_SIZE;
+static int __init reserve_adsp_size_setup(char *p)
 {
-	pmem_adsp_size = memparse(p, NULL);
+	reserve_adsp_size = memparse(p, NULL);
 	return 0;
 }
 
-early_param("pmem_adsp_size", pmem_adsp_size_setup);
-
-#define SND(desc, num) { .name = #desc, .id = num }
-static struct snd_endpoint snd_endpoints_list[] = {
-	SND(HANDSET, 0),
-	SND(MONO_HEADSET, 2),
-	SND(HEADSET, 3),
-	SND(SPEAKER, 6),
-	SND(TTY_HEADSET, 8),
-	SND(TTY_VCO, 9),
-	SND(TTY_HCO, 10),
-	SND(BT, 12),
-	SND(IN_S_SADC_OUT_HANDSET, 16),
-	SND(IN_S_SADC_OUT_SPEAKER_PHONE, 25),
-	SND(FM_DIGITAL_STEREO_HEADSET, 26),
-	SND(FM_DIGITAL_SPEAKER_PHONE, 27),
-	SND(FM_DIGITAL_BT_A2DP_HEADSET, 28),
-	SND(STEREO_HEADSET_AND_SPEAKER, 31),
-	SND(CURRENT, 0x7FFFFFFE),
-	SND(FM_ANALOG_STEREO_HEADSET, 35),
-	SND(FM_ANALOG_STEREO_HEADSET_CODEC, 36),
-};
-#undef SND
-
-static struct msm_snd_endpoints msm_device_snd_endpoints = {
-	.endpoints = snd_endpoints_list,
-	.num = sizeof(snd_endpoints_list) / sizeof(struct snd_endpoint)
-};
-
-static struct platform_device msm_device_snd = {
-	.name = "msm_snd",
-	.id = -1,
-	.dev    = {
-		.platform_data = &msm_device_snd_endpoints
-	},
-};
-
-#define DEC0_FORMAT ((1<<MSM_ADSP_CODEC_MP3)| \
-	(1<<MSM_ADSP_CODEC_AAC)|(1<<MSM_ADSP_CODEC_WMA)| \
-	(1<<MSM_ADSP_CODEC_WMAPRO)|(1<<MSM_ADSP_CODEC_AMRWB)| \
-	(1<<MSM_ADSP_CODEC_AMRNB)|(1<<MSM_ADSP_CODEC_WAV)| \
-	(1<<MSM_ADSP_CODEC_ADPCM)|(1<<MSM_ADSP_CODEC_YADPCM)| \
-	(1<<MSM_ADSP_CODEC_EVRC)|(1<<MSM_ADSP_CODEC_QCELP))
-#define DEC1_FORMAT ((1<<MSM_ADSP_CODEC_MP3)| \
-	(1<<MSM_ADSP_CODEC_AAC)|(1<<MSM_ADSP_CODEC_WMA)| \
-	(1<<MSM_ADSP_CODEC_WMAPRO)|(1<<MSM_ADSP_CODEC_AMRWB)| \
-	(1<<MSM_ADSP_CODEC_AMRNB)|(1<<MSM_ADSP_CODEC_WAV)| \
-	(1<<MSM_ADSP_CODEC_ADPCM)|(1<<MSM_ADSP_CODEC_YADPCM)| \
-	(1<<MSM_ADSP_CODEC_EVRC)|(1<<MSM_ADSP_CODEC_QCELP))
-#define DEC2_FORMAT ((1<<MSM_ADSP_CODEC_MP3)| \
-	(1<<MSM_ADSP_CODEC_AAC)|(1<<MSM_ADSP_CODEC_WMA)| \
-	(1<<MSM_ADSP_CODEC_WMAPRO)|(1<<MSM_ADSP_CODEC_AMRWB)| \
-	(1<<MSM_ADSP_CODEC_AMRNB)|(1<<MSM_ADSP_CODEC_WAV)| \
-	(1<<MSM_ADSP_CODEC_ADPCM)|(1<<MSM_ADSP_CODEC_YADPCM)| \
-	(1<<MSM_ADSP_CODEC_EVRC)|(1<<MSM_ADSP_CODEC_QCELP))
-#define DEC3_FORMAT ((1<<MSM_ADSP_CODEC_MP3)| \
-	(1<<MSM_ADSP_CODEC_AAC)|(1<<MSM_ADSP_CODEC_WMA)| \
-	(1<<MSM_ADSP_CODEC_WMAPRO)|(1<<MSM_ADSP_CODEC_AMRWB)| \
-	(1<<MSM_ADSP_CODEC_AMRNB)|(1<<MSM_ADSP_CODEC_WAV)| \
-	(1<<MSM_ADSP_CODEC_ADPCM)|(1<<MSM_ADSP_CODEC_YADPCM)| \
-	(1<<MSM_ADSP_CODEC_EVRC)|(1<<MSM_ADSP_CODEC_QCELP))
-#define DEC4_FORMAT (1<<MSM_ADSP_CODEC_MIDI)
-
-static unsigned int dec_concurrency_table[] = {
-	/* Audio LP */
-	(DEC0_FORMAT|(1<<MSM_ADSP_MODE_TUNNEL)|(1<<MSM_ADSP_OP_DMA)), 0,
-	0, 0, 0,
-
-	/* Concurrency 1 */
-	(DEC0_FORMAT|(1<<MSM_ADSP_MODE_TUNNEL)|(1<<MSM_ADSP_OP_DM)),
-	(DEC1_FORMAT|(1<<MSM_ADSP_MODE_TUNNEL)|(1<<MSM_ADSP_OP_DM)),
-	(DEC2_FORMAT|(1<<MSM_ADSP_MODE_TUNNEL)|(1<<MSM_ADSP_OP_DM)),
-	(DEC3_FORMAT|(1<<MSM_ADSP_MODE_TUNNEL)|(1<<MSM_ADSP_OP_DM)),
-	(DEC4_FORMAT),
-
-	 /* Concurrency 2 */
-	(DEC0_FORMAT|(1<<MSM_ADSP_MODE_TUNNEL)|(1<<MSM_ADSP_OP_DM)),
-	(DEC1_FORMAT|(1<<MSM_ADSP_MODE_TUNNEL)|(1<<MSM_ADSP_OP_DM)),
-	(DEC2_FORMAT|(1<<MSM_ADSP_MODE_TUNNEL)|(1<<MSM_ADSP_OP_DM)),
-	(DEC3_FORMAT|(1<<MSM_ADSP_MODE_TUNNEL)|(1<<MSM_ADSP_OP_DM)),
-	(DEC4_FORMAT),
-
-	/* Concurrency 3 */
-	(DEC0_FORMAT|(1<<MSM_ADSP_MODE_TUNNEL)|(1<<MSM_ADSP_OP_DM)),
-	(DEC1_FORMAT|(1<<MSM_ADSP_MODE_TUNNEL)|(1<<MSM_ADSP_OP_DM)),
-	(DEC2_FORMAT|(1<<MSM_ADSP_MODE_TUNNEL)|(1<<MSM_ADSP_OP_DM)),
-	(DEC3_FORMAT|(1<<MSM_ADSP_MODE_NONTUNNEL)|(1<<MSM_ADSP_OP_DM)),
-	(DEC4_FORMAT),
-
-	/* Concurrency 4 */
-	(DEC0_FORMAT|(1<<MSM_ADSP_MODE_TUNNEL)|(1<<MSM_ADSP_OP_DM)),
-	(DEC1_FORMAT|(1<<MSM_ADSP_MODE_TUNNEL)|(1<<MSM_ADSP_OP_DM)),
-	(DEC2_FORMAT|(1<<MSM_ADSP_MODE_NONTUNNEL)|(1<<MSM_ADSP_OP_DM)),
-	(DEC3_FORMAT|(1<<MSM_ADSP_MODE_NONTUNNEL)|(1<<MSM_ADSP_OP_DM)),
-	(DEC4_FORMAT),
-
-	/* Concurrency 5 */
-	(DEC0_FORMAT|(1<<MSM_ADSP_MODE_TUNNEL)|(1<<MSM_ADSP_OP_DM)),
-	(DEC1_FORMAT|(1<<MSM_ADSP_MODE_NONTUNNEL)|(1<<MSM_ADSP_OP_DM)),
-	(DEC2_FORMAT|(1<<MSM_ADSP_MODE_NONTUNNEL)|(1<<MSM_ADSP_OP_DM)),
-	(DEC3_FORMAT|(1<<MSM_ADSP_MODE_NONTUNNEL)|(1<<MSM_ADSP_OP_DM)),
-	(DEC4_FORMAT),
-
-	/* Concurrency 6 */
-	(DEC0_FORMAT|(1<<MSM_ADSP_MODE_TUNNEL)|
-			(1<<MSM_ADSP_MODE_NONTUNNEL)|(1<<MSM_ADSP_OP_DM)),
-	0, 0, 0, 0,
-
-	/* Concurrency 7 */
-	(DEC0_FORMAT|(1<<MSM_ADSP_MODE_NONTUNNEL)|(1<<MSM_ADSP_OP_DM)),
-	(DEC1_FORMAT|(1<<MSM_ADSP_MODE_NONTUNNEL)|(1<<MSM_ADSP_OP_DM)),
-	(DEC2_FORMAT|(1<<MSM_ADSP_MODE_NONTUNNEL)|(1<<MSM_ADSP_OP_DM)),
-	(DEC3_FORMAT|(1<<MSM_ADSP_MODE_NONTUNNEL)|(1<<MSM_ADSP_OP_DM)),
-	(DEC4_FORMAT),
-};
-
-#define DEC_INFO(name, queueid, decid, nr_codec) { .module_name = name, \
-	.module_queueid = queueid, .module_decid = decid, \
-	.nr_codec_support = nr_codec}
-
-static struct msm_adspdec_info dec_info_list[] = {
-	DEC_INFO("AUDPLAY0TASK", 13, 0, 11), /* AudPlay0BitStreamCtrlQueue */
-	DEC_INFO("AUDPLAY1TASK", 14, 1, 11),  /* AudPlay1BitStreamCtrlQueue */
-	DEC_INFO("AUDPLAY2TASK", 15, 2, 11),  /* AudPlay2BitStreamCtrlQueue */
-	DEC_INFO("AUDPLAY3TASK", 16, 3, 11),  /* AudPlay3BitStreamCtrlQueue */
-	DEC_INFO("AUDPLAY4TASK", 17, 4, 1),  /* AudPlay4BitStreamCtrlQueue */
-};
-
-static struct msm_adspdec_database msm_device_adspdec_database = {
-	.num_dec = ARRAY_SIZE(dec_info_list),
-	.num_concurrency_support = (ARRAY_SIZE(dec_concurrency_table) / \
-					ARRAY_SIZE(dec_info_list)),
-	.dec_concurrency_table = dec_concurrency_table,
-	.dec_info_list = dec_info_list,
-};
-
-static struct platform_device msm_device_adspdec = {
-	.name = "msm_adspdec",
-	.id = -1,
-	.dev    = {
-		.platform_data = &msm_device_adspdec_database
-	},
-};
-
-static struct android_pmem_platform_data android_pmem_audio_pdata = {
-	.name = "pmem_audio",
-	.allocator_type = PMEM_ALLOCATORTYPE_BITMAP,
-	.cached = 0,
-	.memory_type = MEMTYPE_EBI1,
-};
-
-static struct platform_device android_pmem_audio_device = {
-	.name = "android_pmem",
-	.id = 2,
-	.dev = { .platform_data = &android_pmem_audio_pdata },
-};
-
-static struct android_pmem_platform_data android_pmem_pdata = {
-	.name = "pmem",
-	.allocator_type = PMEM_ALLOCATORTYPE_BITMAP,
-	.cached = 1,
-	.memory_type = MEMTYPE_EBI1,
-};
-static struct platform_device android_pmem_device = {
-	.name = "android_pmem",
-	.id = 0,
-	.dev = { .platform_data = &android_pmem_pdata },
-};
+early_param("reserve_adsp_size", reserve_adsp_size_setup);
 
 static u32 msm_calculate_batt_capacity(u32 current_voltage);
 
 static struct msm_psy_batt_pdata msm_psy_batt_data = {
-	.voltage_min_design     = 3200,
+	.voltage_min_design     = 3500,
 	.voltage_max_design     = 4200,
-	.voltage_fail_safe      = 3340,
+	.voltage_fail_safe      = 3598,
 	.avail_chg_sources      = AC_CHG | USB_CHG ,
 	.batt_technology        = POWER_SUPPLY_TECHNOLOGY_LION,
 	.calculate_capacity     = &msm_calculate_batt_capacity,
@@ -629,13 +520,29 @@ static struct platform_device msm_adc_device = {
 	},
 };
 
-static struct fmem_platform_data fmem_pdata;
-
-static struct platform_device fmem_device = {
-	.name = "fmem",
-	.id = 1,
-	.dev = { .platform_data = &fmem_pdata },
+#ifdef CONFIG_MSM_RTB
+static struct msm_rtb_platform_data msm7627a_rtb_pdata = {
+	.size = SZ_1M,
 };
+
+static int __init msm_rtb_set_buffer_size(char *p)
+{
+	int s;
+
+	s = memparse(p, NULL);
+	msm7627a_rtb_pdata.size = ALIGN(s, SZ_4K);
+	return 0;
+}
+early_param("msm_rtb_size", msm_rtb_set_buffer_size);
+
+struct platform_device msm7627a_rtb_device = {
+	.name = "msm_rtb",
+	.id   = -1,
+	.dev  = {
+		 .platform_data = &msm7627a_rtb_pdata,
+	},
+};
+#endif
 
 #define GPIO_VREG_INIT(_id, _reg_name, _gpio_label, _gpio, _active_low) \
 	[GPIO_VREG_ID_##_id] = { \
@@ -655,6 +562,9 @@ static struct platform_device fmem_device = {
 
 #define GPIO_VREG_ID_EXT_2P85V	0
 #define GPIO_VREG_ID_EXT_1P8V	1
+#define GPIO_VREG_ID_EXT_2P85V_SKU3	2
+#define GPIO_VREG_ID_EXT_1P8V_SKU3	3
+#define GPIO_VREG_ID_EXT_1P8V_SKU3_1	4
 
 static struct regulator_consumer_supply vreg_consumers_EXT_2P85V[] = {
 	REGULATOR_SUPPLY("cam_ov5647_avdd", "0-006c"),
@@ -670,14 +580,41 @@ static struct regulator_consumer_supply vreg_consumers_EXT_1P8V[] = {
 	REGULATOR_SUPPLY("lcd_vddi", "mipi_dsi.1"),
 };
 
+static struct regulator_consumer_supply vreg_consumers_EXT_2P85V_SKU3[] = {
+	REGULATOR_SUPPLY("cam_ov5647_avdd", "0-006c"),
+	REGULATOR_SUPPLY("cam_ov7692_avdd", "0-0078"),
+	REGULATOR_SUPPLY("cam_ov8825_avdd", "0-000d"),
+	REGULATOR_SUPPLY("lcd_vdd_sku3", "lcdc.0"),
+};
+
+static struct regulator_consumer_supply vreg_consumers_EXT_1P8V_SKU3[] = {
+	REGULATOR_SUPPLY("cam_ov5647_vdd", "0-006c"),
+	REGULATOR_SUPPLY("cam_ov7692_vdd", "0-0078"),
+	REGULATOR_SUPPLY("cam_ov8825_vdd", "0-000d"),
+	REGULATOR_SUPPLY("lcd_vddi_sku3", "lcdc.0"),
+};
+
+static struct regulator_consumer_supply vreg_consumers_EXT_1P8V_SKU3_1[] = {
+	REGULATOR_SUPPLY("cam_ov5647_vdd", "0-006c"),
+	REGULATOR_SUPPLY("cam_ov7692_vdd", "0-0078"),
+	REGULATOR_SUPPLY("cam_ov8825_vdd", "0-000d"),
+	REGULATOR_SUPPLY("lcd_vddi_sku3", "lcdc.0"),
+};
+
 /* GPIO regulator constraints */
 static struct gpio_regulator_platform_data msm_gpio_regulator_pdata[] = {
 	GPIO_VREG_INIT(EXT_2P85V, "ext_2p85v", "ext_2p85v_en", 35, 0),
 	GPIO_VREG_INIT(EXT_1P8V, "ext_1p8v", "ext_1p8v_en", 40, 0),
+	GPIO_VREG_INIT(EXT_2P85V_SKU3, "ext_2p85v_sku3", "ext_2p85v_sku3_en",
+								35, 0),
+	GPIO_VREG_INIT(EXT_1P8V_SKU3, "ext_1p8v_sku3", "ext_1p8v_sku3_en",
+								34, 0),
+	GPIO_VREG_INIT(EXT_1P8V_SKU3_1, "ext_1p8v_sku3_1", "ext_1p8v_sku3_1_en",
+								58, 0),
 };
 
 /* GPIO regulator */
-static struct platform_device qrd_msm8625_vreg_gpio_ext_2p85v __devinitdata = {
+static struct platform_device qrd_vreg_gpio_ext_2p85v __devinitdata = {
 	.name	= GPIO_REGULATOR_DEV_NAME,
 	.id	= 35,
 	.dev	= {
@@ -686,7 +623,7 @@ static struct platform_device qrd_msm8625_vreg_gpio_ext_2p85v __devinitdata = {
 	},
 };
 
-static struct platform_device qrd_msm8625_vreg_gpio_ext_1p8v __devinitdata = {
+static struct platform_device qrd_vreg_gpio_ext_1p8v __devinitdata = {
 	.name	= GPIO_REGULATOR_DEV_NAME,
 	.id	= 40,
 	.dev	= {
@@ -695,19 +632,84 @@ static struct platform_device qrd_msm8625_vreg_gpio_ext_1p8v __devinitdata = {
 	},
 };
 
+static struct platform_device qrd_vreg_gpio_ext_2p85v_sku3 __devinitdata = {
+	.name	= GPIO_REGULATOR_DEV_NAME,
+	.id	= 35,
+	.dev	= {
+		.platform_data =
+			&msm_gpio_regulator_pdata[GPIO_VREG_ID_EXT_2P85V_SKU3],
+	},
+};
+
+static struct platform_device qrd_vreg_gpio_ext_1p8v_sku3 __devinitdata = {
+	.name	= GPIO_REGULATOR_DEV_NAME,
+	.id	= 34,
+	.dev	= {
+		.platform_data =
+			&msm_gpio_regulator_pdata[GPIO_VREG_ID_EXT_1P8V_SKU3],
+	},
+};
+
+static struct platform_device qrd_vreg_gpio_ext_1p8v_sku3_1 __devinitdata = {
+	.name	= GPIO_REGULATOR_DEV_NAME,
+	.id	= 58,
+	.dev	= {
+		.platform_data =
+			&msm_gpio_regulator_pdata[GPIO_VREG_ID_EXT_1P8V_SKU3_1],
+	},
+};
+
+/* Regulator configuration for the NCP6335D buck */
+struct regulator_consumer_supply ncp6335d_consumer_supplies[] = {
+	REGULATOR_SUPPLY("ncp6335d", NULL),
+};
+
+static struct regulator_init_data ncp6335d_init_data = {
+	.constraints	= {
+		.name		= "ncp6335d_sw",
+		.min_uV		= 600000,
+		.max_uV		= 1400000,
+		.valid_ops_mask	= REGULATOR_CHANGE_VOLTAGE |
+				REGULATOR_CHANGE_STATUS |
+				REGULATOR_CHANGE_MODE,
+		.valid_modes_mask = REGULATOR_MODE_NORMAL |
+				REGULATOR_MODE_FAST,
+		.initial_mode	= REGULATOR_MODE_NORMAL,
+		.always_on	= 1,
+	},
+	.num_consumer_supplies = ARRAY_SIZE(ncp6335d_consumer_supplies),
+	.consumer_supplies = ncp6335d_consumer_supplies,
+};
+
+static struct ncp6335d_platform_data ncp6335d_pdata = {
+	.init_data = &ncp6335d_init_data,
+	.default_vsel = NCP6335D_VSEL0,
+	.slew_rate_ns = 166,
+};
+
+static struct i2c_board_info i2c2_info[] __initdata = {
+	{
+		I2C_BOARD_INFO("ncp6335d", 0x38 >> 1),
+		.platform_data = &ncp6335d_pdata,
+	},
+};
+
 static struct platform_device *common_devices[] __initdata = {
 	&android_usb_device,
-	&android_pmem_device,
-	&android_pmem_adsp_device,
-	&android_pmem_audio_device,
 	&msm_batt_device,
 	&msm_device_adspdec,
 	&msm_device_snd,
+	&msm_device_cad,
 	&asoc_msm_pcm,
 	&asoc_msm_dai0,
 	&asoc_msm_dai1,
 	&msm_adc_device,
-	&fmem_device,
+#ifdef CONFIG_MSM_RTB
+	&msm7627a_rtb_device,
+#endif
+#ifdef CONFIG_ION_MSM
+	&ion_dev,
+#endif
 };
 
 static struct platform_device *qrd7627a_devices[] __initdata = {
@@ -722,6 +724,21 @@ static struct platform_device *qrd7627a_devices[] __initdata = {
 	&msm_kgsl_3d0,
 };
 
+static struct platform_device *msm8625_lcd_camera_devices[] __initdata = {
+	&qrd_vreg_gpio_ext_2p85v,
+	&qrd_vreg_gpio_ext_1p8v,
+};
+
+static struct platform_device *sku3_lcd_camera_devices[] __initdata = {
+	&qrd_vreg_gpio_ext_2p85v_sku3,
+	&qrd_vreg_gpio_ext_1p8v_sku3,
+};
+
+static struct platform_device *sku3_1_lcd_camera_devices[] __initdata = {
+	&qrd_vreg_gpio_ext_2p85v_sku3,
+	&qrd_vreg_gpio_ext_1p8v_sku3_1,
+};
+
 static struct platform_device *qrd3_devices[] __initdata = {
 	&msm_device_nand,
 };
@@ -731,30 +748,99 @@ static struct platform_device *msm8625_evb_devices[] __initdata = {
 	&msm8625_device_smd,
 	&msm8625_gsbi0_qup_i2c_device,
 	&msm8625_gsbi1_qup_i2c_device,
+	&msm_i2c_gpio,  /* TODO: Make this specific to 8625q */
 	&msm8625_device_uart1,
 	&msm8625_device_uart_dm1,
 	&msm8625_device_otg,
 	&msm8625_device_gadget_peripheral,
 	&msm8625_kgsl_3d0,
-	&qrd_msm8625_vreg_gpio_ext_2p85v,
-	&qrd_msm8625_vreg_gpio_ext_1p8v,
 };
 
-static unsigned pmem_kernel_ebi1_size = PMEM_KERNEL_EBI1_SIZE;
-static int __init pmem_kernel_ebi1_size_setup(char *p)
+static unsigned reserve_kernel_ebi1_size = RESERVE_KERNEL_EBI1_SIZE;
+static int __init reserve_kernel_ebi1_size_setup(char *p)
 {
-	pmem_kernel_ebi1_size = memparse(p, NULL);
+	reserve_kernel_ebi1_size = memparse(p, NULL);
 	return 0;
 }
-early_param("pmem_kernel_ebi1_size", pmem_kernel_ebi1_size_setup);
+early_param("reserve_kernel_ebi1_size", reserve_kernel_ebi1_size_setup);
 
-static unsigned pmem_audio_size = MSM_PMEM_AUDIO_SIZE;
-static int __init pmem_audio_size_setup(char *p)
+
+static unsigned reserve_audio_size = MSM_RESERVE_AUDIO_SIZE;
+static int __init reserve_audio_size_setup(char *p)
 {
-	pmem_audio_size = memparse(p, NULL);
+	reserve_audio_size = memparse(p, NULL);
 	return 0;
 }
-early_param("pmem_audio_size", pmem_audio_size_setup);
+early_param("reserve_audio_size", reserve_audio_size_setup);
+
+static void fix_sizes(void)
+{
+	if (get_ddr_size() > SZ_512M)
+		reserve_adsp_size = CAMERA_ZSL_SIZE;
+#ifdef CONFIG_ION_MSM
+	msm_ion_camera_size = reserve_adsp_size;
+	msm_ion_audio_size = (MSM_RESERVE_AUDIO_SIZE +
+						RESERVE_KERNEL_EBI1_SIZE);
+	msm_ion_sf_size = reserve_mdp_size;
+#endif
+}
+
+#ifdef CONFIG_ION_MSM
+#ifdef CONFIG_MSM_MULTIMEDIA_USE_ION
+static struct ion_co_heap_pdata co_ion_pdata = {
+	.adjacent_mem_id = INVALID_HEAP_ID,
+	.align = PAGE_SIZE,
+};
+#endif
+
+/**
+ * These heaps are listed in the order they will be allocated.
+ * Don't swap the order unless you know what you are doing!
+ */
+static struct ion_platform_data ion_pdata = {
+	.nr = MSM_ION_HEAP_NUM,
+	.has_outer_cache = 1,
+	.heaps = {
+		{
+			.id	= ION_SYSTEM_HEAP_ID,
+			.type	= ION_HEAP_TYPE_SYSTEM,
+			.name	= ION_VMALLOC_HEAP_NAME,
+		},
+#ifdef CONFIG_MSM_MULTIMEDIA_USE_ION
+		/* ION_ADSP = CAMERA */
+		{
+			.id	= ION_CAMERA_HEAP_ID,
+			.type	= ION_HEAP_TYPE_CARVEOUT,
+			.name	= ION_CAMERA_HEAP_NAME,
+			.memory_type = ION_EBI_TYPE,
+			.extra_data = (void *)&co_ion_pdata,
+		},
+		/* ION_AUDIO */
+		{
+			.id	= ION_AUDIO_HEAP_ID,
+			.type	= ION_HEAP_TYPE_CARVEOUT,
+			.name	= ION_AUDIO_HEAP_NAME,
+			.memory_type = ION_EBI_TYPE,
+			.extra_data = (void *)&co_ion_pdata,
+		},
+		/* ION_MDP = SF */
+		{
+			.id	= ION_SF_HEAP_ID,
+			.type	= ION_HEAP_TYPE_CARVEOUT,
+			.name	= ION_SF_HEAP_NAME,
+			.memory_type = ION_EBI_TYPE,
+			.extra_data = (void *)&co_ion_pdata,
+		},
+#endif
+	}
+};
+
+static struct platform_device ion_dev = {
+	.name = "ion-msm",
+	.id = 1,
+	.dev = { .platform_data = &ion_pdata },
+};
+#endif
 
 static struct memtype_reserve msm7627a_reserve_table[] __initdata = {
 	[MEMTYPE_SMI] = {
@@ -767,67 +853,41 @@ static struct memtype_reserve msm7627a_reserve_table[] __initdata = {
 	},
 };
 
-#ifdef CONFIG_ANDROID_PMEM
-static struct android_pmem_platform_data *pmem_pdata_array[] __initdata = {
-		&android_pmem_adsp_pdata,
-		&android_pmem_audio_pdata,
-		&android_pmem_pdata,
-};
+#ifdef CONFIG_MSM_RTB
+static void __init reserve_rtb_memory(void)
+{
+	msm7627a_reserve_table[MEMTYPE_EBI1].size += msm7627a_rtb_pdata.size;
+}
+#else
+static void __init reserve_rtb_memory(void)
+{
+}
 #endif
 
-static void __init size_pmem_devices(void)
+static void __init size_ion_devices(void)
 {
-#ifdef CONFIG_ANDROID_PMEM
-	unsigned int i;
-	unsigned int reusable_count = 0;
-
-	android_pmem_adsp_pdata.size = pmem_adsp_size;
-	android_pmem_pdata.size = pmem_mdp_size;
-	android_pmem_audio_pdata.size = pmem_audio_size;
-
-	fmem_pdata.size = 0;
-	fmem_pdata.align = PAGE_SIZE;
-
-	/* Find pmem devices that should use FMEM (reusable) memory.
-	 */
-	for (i = 0; i < ARRAY_SIZE(pmem_pdata_array); ++i) {
-		struct android_pmem_platform_data *pdata = pmem_pdata_array[i];
-
-		if (!reusable_count && pdata->reusable)
-			fmem_pdata.size += pdata->size;
-
-		reusable_count += (pdata->reusable) ? 1 : 0;
-
-		if (pdata->reusable && reusable_count > 1) {
-			pr_err("%s: Too many PMEM devices specified as reusable. PMEM device %s was not configured as reusable.\n",
-				__func__, pdata->name);
-			pdata->reusable = 0;
-		}
-	}
-
+#ifdef CONFIG_MSM_MULTIMEDIA_USE_ION
+	ion_pdata.heaps[1].size = msm_ion_camera_size;
+	ion_pdata.heaps[2].size = msm_ion_audio_size;
+	ion_pdata.heaps[3].size = msm_ion_sf_size;
 #endif
 }
 
-static void __init reserve_memory_for(struct android_pmem_platform_data *p)
+static void __init reserve_ion_memory(void)
 {
-	msm7627a_reserve_table[p->memory_type].size += p->size;
-}
-
-static void __init reserve_pmem_memory(void)
-{
-#ifdef CONFIG_ANDROID_PMEM
-	unsigned int i;
-	for (i = 0; i < ARRAY_SIZE(pmem_pdata_array); ++i)
-		reserve_memory_for(pmem_pdata_array[i]);
-
-	msm7627a_reserve_table[MEMTYPE_EBI1].size += pmem_kernel_ebi1_size;
+#if defined(CONFIG_ION_MSM) && defined(CONFIG_MSM_MULTIMEDIA_USE_ION)
+	msm7627a_reserve_table[MEMTYPE_EBI1].size += msm_ion_camera_size;
+	msm7627a_reserve_table[MEMTYPE_EBI1].size += msm_ion_audio_size;
+	msm7627a_reserve_table[MEMTYPE_EBI1].size += msm_ion_sf_size;
 #endif
 }
 
 static void __init msm7627a_calculate_reserve_sizes(void)
 {
-	size_pmem_devices();
-	reserve_pmem_memory();
+	fix_sizes();
+	size_ion_devices();
+	reserve_ion_memory();
+	reserve_rtb_memory();
 }
 
 static int msm7627a_paddr_to_memtype(unsigned int paddr)
@@ -850,7 +910,7 @@ static void __init msm7627a_reserve(void)
 
 static void __init msm8625_reserve(void)
 {
-	memblock_remove(MSM8625_SECONDARY_PHYS, SZ_8);
+	memblock_remove(MSM8625_CPU_PHYS, SZ_8);
 	msm7627a_reserve();
 }
 
@@ -885,10 +945,20 @@ static void __init msm7627a_device_i2c_init(void)
 
 static void __init msm8625_device_i2c_init(void)
 {
+	int i, rc;
+
 	msm8625_gsbi0_qup_i2c_device.dev.platform_data
 					= &msm_gsbi0_qup_i2c_pdata;
 	msm8625_gsbi1_qup_i2c_device.dev.platform_data
 					= &msm_gsbi1_qup_i2c_pdata;
+	if (machine_is_qrd_skud_prime()) {
+		for (i = 0 ; i < ARRAY_SIZE(i2c_gpio_config); i++) {
+			rc = gpio_tlmm_config(i2c_gpio_config[i].gpio_cfg,
+					GPIO_CFG_ENABLE);
+			if (rc)
+				pr_err("I2C-gpio tlmm config failed\n");
+		}
+	}
 }
 
 static struct platform_device msm_proccomm_regulator_dev = {
@@ -922,7 +992,8 @@ static void __init msm_add_footswitch_devices(void)
 static void __init add_platform_devices(void)
 {
 	if (machine_is_msm8625_evb() || machine_is_msm8625_qrd7()
-				|| machine_is_msm8625_evt()) {
+				|| machine_is_msm8625_evt()
+				|| machine_is_qrd_skud_prime()) {
 		platform_add_devices(msm8625_evb_devices,
 				ARRAY_SIZE(msm8625_evb_devices));
 		platform_add_devices(qrd3_devices,
@@ -935,6 +1006,24 @@ static void __init add_platform_devices(void)
 	if (machine_is_msm7627a_qrd3() || machine_is_msm7627a_evb())
 		platform_add_devices(qrd3_devices,
 				ARRAY_SIZE(qrd3_devices));
+
+	if (machine_is_msm7627a_evb() || machine_is_msm8625_evb()
+				|| machine_is_msm8625_evt()
+				|| machine_is_qrd_skud_prime())
+		platform_add_devices(msm8625_lcd_camera_devices,
+				ARRAY_SIZE(msm8625_lcd_camera_devices));
+	else if (machine_is_msm8625_qrd7())
+		platform_add_devices(sku3_1_lcd_camera_devices,
+				ARRAY_SIZE(sku3_1_lcd_camera_devices));
+	else if (machine_is_msm7627a_qrd3()) {
+		u32 socinfo = socinfo_get_platform_type();
+		if (socinfo == 0x0B)
+			platform_add_devices(sku3_lcd_camera_devices,
+					ARRAY_SIZE(sku3_lcd_camera_devices));
+		else if (socinfo == 0x0F)
+			platform_add_devices(sku3_1_lcd_camera_devices,
+					ARRAY_SIZE(sku3_1_lcd_camera_devices));
+	}
 
 	platform_add_devices(common_devices,
 			ARRAY_SIZE(common_devices));
@@ -981,6 +1070,7 @@ static void __init msm_pm_init(void)
 				ARRAY_SIZE(msm8625_pm_data));
 		BUG_ON(msm_pm_boot_init(&msm_pm_8625_boot_pdata));
 		msm8x25_spm_device_init();
+		msm_pm_register_cpr_ops();
 	}
 }
 
@@ -1014,6 +1104,11 @@ static void __init msm_qrd_init(void)
 
 	msm_pm_register_irqs();
 	msm_fb_add_devices();
+
+	if (machine_is_qrd_skud_prime())
+		i2c_register_board_info(2, i2c2_info,
+				ARRAY_SIZE(i2c2_info));
+
 
 #if defined(CONFIG_BT) && defined(CONFIG_MARIMBA_CORE)
 	msm7627a_bt_power_init();
@@ -1081,6 +1176,16 @@ MACHINE_START(MSM8625_QRD7, "QRD MSM8625 QRD7")
 	.handle_irq	= gic_handle_irq,
 MACHINE_END
 MACHINE_START(MSM8625_EVT, "QRD MSM8625 EVT")
+	.atag_offset	= 0x100,
+	.map_io		= msm8625_map_io,
+	.reserve	= msm8625_reserve,
+	.init_irq	= msm8625_init_irq,
+	.init_machine	= msm_qrd_init,
+	.timer		= &msm_timer,
+	.init_early	= qrd7627a_init_early,
+	.handle_irq	= gic_handle_irq,
+MACHINE_END
+MACHINE_START(QRD_SKUD_PRIME, "QRD MSM8625 SKUD PRIME")
 	.atag_offset	= 0x100,
 	.map_io		= msm8625_map_io,
 	.reserve	= msm8625_reserve,

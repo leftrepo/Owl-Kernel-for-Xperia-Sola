@@ -43,7 +43,7 @@ static void msm_pm_write_boot_vector(unsigned int cpu, unsigned long address)
 #ifdef CONFIG_MSM_SCM
 static int __devinit msm_pm_tz_boot_init(void)
 {
-	int flag = 0;
+	unsigned int flag = 0;
 	if (num_possible_cpus() == 1)
 		flag = SCM_FLAG_WARMBOOT_CPU0;
 	else if (num_possible_cpus() == 2)
@@ -54,7 +54,7 @@ static int __devinit msm_pm_tz_boot_init(void)
 	else
 		__WARN();
 
-	return scm_set_boot_addr((void *)virt_to_phys(msm_pm_boot_entry), flag);
+	return scm_set_boot_addr(virt_to_phys(msm_pm_boot_entry), flag);
 }
 
 static void msm_pm_config_tz_before_pc(unsigned int cpu,
@@ -158,13 +158,17 @@ int __devinit msm_pm_boot_init(struct msm_pm_boot_platform_data *pdata)
 			msm_pm_boot_after_pc
 				= msm_pm_config_rst_vector_after_pc;
 		} else {
+			uint32_t mpa5_boot_remap_addr[2] = {0x34, 0x4C};
+			uint32_t mpa5_cfg_ctl[2] = {0x30, 0x48};
+
 			warm_boot_ptr = ioremap_nocache(
 						MSM8625_WARM_BOOT_PHYS, SZ_64);
 			ret = msm_pm_boot_reset_vector_init(warm_boot_ptr);
 
 			entry = virt_to_phys(msm_pm_boot_entry);
 
-			/* Below sequence is a work around for cores
+			/*
+			 * Below sequence is a work around for cores
 			 * to come out of GDFS properly on 8625 target.
 			 * On 8625 while cores coming out of GDFS observed
 			 * the memory corruption at very first memory read.
@@ -176,7 +180,8 @@ int __devinit msm_pm_boot_init(struct msm_pm_boot_platform_data *pdata)
 			msm_pm_reset_vector[4] = 0xE12FFF10; /* bx  r0 */
 			msm_pm_reset_vector[5] = entry; /* 0x14 */
 
-			/* Here upper 16bits[16:31] used by CORE1
+			/*
+			 * Here upper 16bits[16:31] used by CORE1
 			 * lower 16bits[0:15] used by CORE0
 			 */
 			entry = (MSM8625_WARM_BOOT_PHYS |
@@ -184,17 +189,30 @@ int __devinit msm_pm_boot_init(struct msm_pm_boot_platform_data *pdata)
 
 			/* write 'entry' to boot remapper register */
 			__raw_writel(entry, (pdata->v_addr +
-						MPA5_BOOT_REMAP_ADDR));
+						mpa5_boot_remap_addr[0]));
 
-			/* Enable boot remapper for C0 [bit:25th] */
+			/*
+			 * Enable boot remapper for C0 [bit:25th]
+			 * Enable boot remapper for C1 [bit:26th]
+			 */
 			__raw_writel(readl_relaxed(pdata->v_addr +
-					MPA5_CFG_CTL_REG) | BIT(25),
-					pdata->v_addr + MPA5_CFG_CTL_REG);
+					mpa5_cfg_ctl[0]) | (0x3 << 25),
+					pdata->v_addr + mpa5_cfg_ctl[0]);
 
-			/* Enable boot remapper for C1 [bit:26th] */
-			__raw_writel(readl_relaxed(pdata->v_addr +
-					MPA5_CFG_CTL_REG) | BIT(26),
-					pdata->v_addr + MPA5_CFG_CTL_REG);
+			/* 8x25Q changes */
+			if (SOCINFO_VERSION_MAJOR(socinfo_get_version()) >= 3) {
+				/* write 'entry' to boot remapper register */
+				__raw_writel(entry, (pdata->v_addr +
+						mpa5_boot_remap_addr[1]));
+
+				/*
+				 * Enable boot remapper for C2 [bit:25th]
+				 * Enable boot remapper for C3 [bit:26th]
+				 */
+				__raw_writel(readl_relaxed(pdata->v_addr +
+					mpa5_cfg_ctl[1]) | (0x3 << 25),
+					pdata->v_addr + mpa5_cfg_ctl[1]);
+			}
 			msm_pm_boot_before_pc = msm_pm_write_boot_vector;
 		}
 		break;
@@ -211,7 +229,10 @@ static int __devinit msm_pm_boot_probe(struct platform_device *pdev)
 	char *key = NULL;
 	uint32_t val = 0;
 	int ret = 0;
-	int flag = 0;
+	uint32_t vaddr_val;
+
+	pdata.p_addr = 0;
+	vaddr_val = 0;
 
 	key = "qcom,mode";
 	ret = of_property_read_u32(pdev->dev.of_node, key, &val);
@@ -223,24 +244,43 @@ static int __devinit msm_pm_boot_probe(struct platform_device *pdev)
 
 	key = "qcom,phy-addr";
 	ret = of_property_read_u32(pdev->dev.of_node, key, &val);
-	if (ret && pdata.mode == MSM_PM_BOOT_CONFIG_RESET_VECTOR_PHYS)
-		goto fail;
-	if (!ret) {
+	if (!ret)
 		pdata.p_addr = val;
-		flag++;
-	}
+
 
 	key = "qcom,virt-addr";
-	ret = of_property_read_u32(pdev->dev.of_node, key, &val);
-	if (ret && pdata.mode == MSM_PM_BOOT_CONFIG_RESET_VECTOR_VIRT)
-		goto fail;
-	if (!ret) {
-		pdata.v_addr = (void *)val;
-		flag++;
-	}
+	ret = of_property_read_u32(pdev->dev.of_node, key, &vaddr_val);
 
-	if (pdata.mode == MSM_PM_BOOT_CONFIG_REMAP_BOOT_ADDR && (flag != 2)) {
-		key = "addresses for boot remap";
+	switch (pdata.mode) {
+	case MSM_PM_BOOT_CONFIG_RESET_VECTOR_PHYS:
+		if (!pdata.p_addr) {
+			key = "qcom,phy-addr";
+			goto fail;
+		}
+		break;
+	case MSM_PM_BOOT_CONFIG_RESET_VECTOR_VIRT:
+		if (!vaddr_val)
+			goto fail;
+
+		pdata.v_addr = (void *)vaddr_val;
+		break;
+	case MSM_PM_BOOT_CONFIG_REMAP_BOOT_ADDR:
+		if (!vaddr_val)
+			goto fail;
+
+		pdata.v_addr = ioremap_nocache(vaddr_val, SZ_8);
+
+		pdata.p_addr = allocate_contiguous_ebi_nomap(SZ_8, SZ_64K);
+		if (!pdata.p_addr) {
+			key = "qcom,phy-addr";
+			goto fail;
+		}
+		break;
+	case MSM_PM_BOOT_CONFIG_TZ:
+		break;
+	default:
+		pr_err("%s: Unsupported boot mode %d",
+			__func__, pdata.mode);
 		goto fail;
 	}
 

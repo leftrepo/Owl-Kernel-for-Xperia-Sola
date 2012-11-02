@@ -1,4 +1,4 @@
-/* Copyright (c) 2011, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -181,7 +181,7 @@ const struct file_operations ramdump_file_ops = {
 	.poll = ramdump_poll
 };
 
-void *create_ramdump_device(const char *dev_name)
+void *create_ramdump_device(const char *dev_name, struct device *parent)
 {
 	int ret;
 	struct ramdump_device *rd_dev;
@@ -207,6 +207,7 @@ void *create_ramdump_device(const char *dev_name)
 	rd_dev->device.minor = MISC_DYNAMIC_MINOR;
 	rd_dev->device.name = rd_dev->name;
 	rd_dev->device.fops = &ramdump_file_ops;
+	rd_dev->device.parent = parent;
 
 	init_waitqueue_head(&rd_dev->dump_wait_q);
 
@@ -220,6 +221,17 @@ void *create_ramdump_device(const char *dev_name)
 	}
 
 	return (void *)rd_dev;
+}
+
+void destroy_ramdump_device(void *dev)
+{
+	struct ramdump_device *rd_dev = dev;
+
+	if (IS_ERR_OR_NULL(rd_dev))
+		return;
+
+	misc_deregister(&rd_dev->device);
+	kfree(rd_dev);
 }
 
 int do_ramdump(void *handle, struct ramdump_segment *segments,

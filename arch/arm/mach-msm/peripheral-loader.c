@@ -12,161 +12,412 @@
 
 #include <linux/module.h>
 #include <linux/string.h>
-#include <linux/device.h>
 #include <linux/firmware.h>
 #include <linux/io.h>
-#include <linux/debugfs.h>
 #include <linux/elf.h>
 #include <linux/mutex.h>
 #include <linux/memblock.h>
 #include <linux/slab.h>
-#include <linux/atomic.h>
 #include <linux/suspend.h>
 #include <linux/rwsem.h>
 #include <linux/sysfs.h>
 #include <linux/workqueue.h>
 #include <linux/jiffies.h>
 #include <linux/wakelock.h>
+#include <linux/err.h>
+#include <linux/msm_ion.h>
+#include <linux/list.h>
+#include <linux/list_sort.h>
 
 #include <asm/uaccess.h>
 #include <asm/setup.h>
-#include <mach/peripheral-loader.h>
 
 #include "peripheral-loader.h"
 
-enum pil_state {
-	PIL_OFFLINE,
-	PIL_ONLINE,
+#define pil_err(desc, fmt, ...)						\
+	dev_err(desc->dev, "%s: " fmt, desc->name, ##__VA_ARGS__)
+#define pil_info(desc, fmt, ...)					\
+	dev_info(desc->dev, "%s: " fmt, desc->name, ##__VA_ARGS__)
+
+/**
+ * proxy_timeout - Override for proxy vote timeouts
+ * -1: Use driver-specified timeout
+ *  0: Hold proxy votes until shutdown
+ * >0: Specify a custom timeout in ms
+ */
+static int proxy_timeout_ms = -1;
+module_param(proxy_timeout_ms, int, S_IRUGO | S_IWUSR);
+
+/**
+ * struct pil_mdt - Representation of <name>.mdt file in memory
+ * @hdr: ELF32 header
+ * @phdr: ELF32 program headers
+ */
+struct pil_mdt {
+	struct elf32_hdr hdr;
+	struct elf32_phdr phdr[];
 };
 
-static const char *pil_states[] = {
-	[PIL_OFFLINE] = "OFFLINE",
-	[PIL_ONLINE] = "ONLINE",
+/**
+ * struct pil_seg - memory map representing one segment
+ * @next: points to next seg mentor NULL if last segment
+ * @paddr: start address of segment
+ * @sz: size of segment
+ * @filesz: size of segment on disk
+ * @num: segment number
+ * @relocated: true if segment is relocated, false otherwise
+ *
+ * Loosely based on an elf program header. Contains all necessary information
+ * to load and initialize a segment of the image in memory.
+ */
+struct pil_seg {
+	phys_addr_t paddr;
+	unsigned long sz;
+	unsigned long filesz;
+	int num;
+	struct list_head list;
+	bool relocated;
 };
 
-struct pil_device {
-	struct pil_desc *desc;
-	int count;
-	enum pil_state state;
-	struct mutex lock;
-	struct device dev;
-	struct module *owner;
-#ifdef CONFIG_DEBUG_FS
-	struct dentry *dentry;
-#endif
+/**
+ * struct pil_priv - Private state for a pil_desc
+ * @proxy: work item used to run the proxy unvoting routine
+ * @wlock: wakelock to prevent suspend during pil_boot
+ * @wname: name of @wlock
+ * @desc: pointer to pil_desc this is private data for
+ * @seg: list of segments sorted by physical address
+ * @entry_addr: physical address where processor starts booting at
+ * @base_addr: smallest start address among all segments that are relocatable
+ * @region_start: address where relocatable region starts or lowest address
+ * for non-relocatable images
+ * @region_end: address where relocatable region ends or highest address for
+ * non-relocatable images
+ * @region: region allocated for relocatable images
+ *
+ * This struct contains data for a pil_desc that should not be exposed outside
+ * of this file. This structure points to the descriptor and the descriptor
+ * points to this structure so that PIL drivers can't access the private
+ * data of a descriptor but this file can access both.
+ */
+struct pil_priv {
 	struct delayed_work proxy;
 	struct wake_lock wlock;
-	char wake_name[32];
+	char wname[32];
+	struct pil_desc *desc;
+	struct list_head segs;
+	phys_addr_t entry_addr;
+	phys_addr_t base_addr;
+	phys_addr_t region_start;
+	phys_addr_t region_end;
+	struct ion_handle *region;
 };
 
-#define to_pil_device(d) container_of(d, struct pil_device, dev)
+static struct ion_client *ion;
 
-static ssize_t name_show(struct device *dev, struct device_attribute *attr,
-		char *buf)
+/**
+ * pil_get_entry_addr() - Retrieve the entry address of a peripheral image
+ * @desc: descriptor from pil_desc_init()
+ *
+ * Returns the physical address where the image boots at or 0 if unknown.
+ */
+phys_addr_t pil_get_entry_addr(struct pil_desc *desc)
 {
-	return snprintf(buf, PAGE_SIZE, "%s\n", to_pil_device(dev)->desc->name);
+	return desc->priv ? desc->priv->entry_addr : 0;
 }
-
-static ssize_t state_show(struct device *dev, struct device_attribute *attr,
-		char *buf)
-{
-	enum pil_state state = to_pil_device(dev)->state;
-	return snprintf(buf, PAGE_SIZE, "%s\n", pil_states[state]);
-}
-
-static struct device_attribute pil_attrs[] = {
-	__ATTR_RO(name),
-	__ATTR_RO(state),
-	{ },
-};
-
-struct bus_type pil_bus_type = {
-	.name		= "pil",
-	.dev_attrs	= pil_attrs,
-};
-
-static int __find_peripheral(struct device *dev, void *data)
-{
-	struct pil_device *pdev = to_pil_device(dev);
-	return !strncmp(pdev->desc->name, data, INT_MAX);
-}
-
-static struct pil_device *find_peripheral(const char *str)
-{
-	struct device *dev;
-
-	if (!str)
-		return NULL;
-
-	dev = bus_find_device(&pil_bus_type, NULL, (void *)str,
-			__find_peripheral);
-	return dev ? to_pil_device(dev) : NULL;
-}
+EXPORT_SYMBOL(pil_get_entry_addr);
 
 static void pil_proxy_work(struct work_struct *work)
 {
-	struct pil_device *pil;
+	struct delayed_work *delayed = to_delayed_work(work);
+	struct pil_priv *priv = container_of(delayed, struct pil_priv, proxy);
+	struct pil_desc *desc = priv->desc;
 
-	pil = container_of(work, struct pil_device, proxy.work);
-	pil->desc->ops->proxy_unvote(pil->desc);
-	wake_unlock(&pil->wlock);
+	desc->ops->proxy_unvote(desc);
+	wake_unlock(&priv->wlock);
+	module_put(desc->owner);
 }
 
-static int pil_proxy_vote(struct pil_device *pil)
+static int pil_proxy_vote(struct pil_desc *desc)
 {
-	if (pil->desc->ops->proxy_vote) {
-		wake_lock(&pil->wlock);
-		return pil->desc->ops->proxy_vote(pil->desc);
+	int ret = 0;
+	struct pil_priv *priv = desc->priv;
+
+	if (desc->ops->proxy_vote) {
+		wake_lock(&priv->wlock);
+		ret = desc->ops->proxy_vote(desc);
+		if (ret)
+			wake_unlock(&priv->wlock);
 	}
+	return ret;
+}
+
+static void pil_proxy_unvote(struct pil_desc *desc, unsigned long timeout)
+{
+	struct pil_priv *priv = desc->priv;
+
+	if (proxy_timeout_ms >= 0)
+		timeout = proxy_timeout_ms;
+
+	if (timeout && desc->ops->proxy_unvote) {
+		if (WARN_ON(!try_module_get(desc->owner)))
+			return;
+		schedule_delayed_work(&priv->proxy, msecs_to_jiffies(timeout));
+	}
+}
+
+static bool segment_is_relocatable(const struct elf32_phdr *p)
+{
+	return !!(p->p_flags & BIT(27));
+}
+
+static phys_addr_t pil_reloc(const struct pil_priv *priv, phys_addr_t addr)
+{
+	return addr - priv->base_addr + priv->region_start;
+}
+
+static struct pil_seg *pil_init_seg(const struct pil_desc *desc,
+				  const struct elf32_phdr *phdr, int num)
+{
+	bool reloc = segment_is_relocatable(phdr);
+	const struct pil_priv *priv = desc->priv;
+	struct pil_seg *seg;
+
+	if (!reloc && memblock_overlaps_memory(phdr->p_paddr, phdr->p_memsz)) {
+		pil_err(desc, "kernel memory would be overwritten [%#08lx, %#08lx)\n",
+			(unsigned long)phdr->p_paddr,
+			(unsigned long)(phdr->p_paddr + phdr->p_memsz));
+		return ERR_PTR(-EPERM);
+	}
+
+	seg = kmalloc(sizeof(*seg), GFP_KERNEL);
+	if (!seg)
+		return ERR_PTR(-ENOMEM);
+	seg->num = num;
+	seg->paddr = reloc ? pil_reloc(priv, phdr->p_paddr) : phdr->p_paddr;
+	seg->filesz = phdr->p_filesz;
+	seg->sz = phdr->p_memsz;
+	seg->relocated = reloc;
+	INIT_LIST_HEAD(&seg->list);
+
+	return seg;
+}
+
+#define segment_is_hash(flag) (((flag) & (0x7 << 24)) == (0x2 << 24))
+
+static int segment_is_loadable(const struct elf32_phdr *p)
+{
+	return (p->p_type == PT_LOAD) && !segment_is_hash(p->p_flags) &&
+		p->p_memsz;
+}
+
+static void pil_dump_segs(const struct pil_priv *priv)
+{
+	struct pil_seg *seg;
+
+	list_for_each_entry(seg, &priv->segs, list) {
+		pil_info(priv->desc, "%d: %#08zx %#08lx\n", seg->num,
+				seg->paddr, seg->paddr + seg->sz);
+	}
+}
+
+/*
+ * Ensure the entry address lies within the image limits and if the image is
+ * relocatable ensure it lies within a relocatable segment.
+ */
+static int pil_init_entry_addr(struct pil_priv *priv, const struct pil_mdt *mdt)
+{
+	struct pil_seg *seg;
+	phys_addr_t entry = mdt->hdr.e_entry;
+	bool image_relocated = priv->region;
+
+	if (image_relocated)
+		entry = pil_reloc(priv, entry);
+	priv->entry_addr = entry;
+
+	if (priv->desc->flags & PIL_SKIP_ENTRY_CHECK)
+		return 0;
+
+	list_for_each_entry(seg, &priv->segs, list) {
+		if (entry >= seg->paddr && entry < seg->paddr + seg->sz) {
+			if (!image_relocated)
+				return 0;
+			else if (seg->relocated)
+				return 0;
+		}
+	}
+	pil_err(priv->desc, "entry address %08zx not within range\n", entry);
+	pil_dump_segs(priv);
+	return -EADDRNOTAVAIL;
+}
+
+static int pil_alloc_region(struct pil_priv *priv, phys_addr_t min_addr,
+				phys_addr_t max_addr, size_t align)
+{
+	struct ion_handle *region;
+	int ret;
+	unsigned int mask;
+	size_t size = round_up(max_addr - min_addr, align);
+
+	if (!ion) {
+		WARN_ON_ONCE("No ION client, can't support relocation\n");
+		return -ENOMEM;
+	}
+
+	/* Force alignment due to linker scripts not getting it right */
+	if (align > SZ_1M) {
+		mask = ION_HEAP(ION_PIL2_HEAP_ID);
+		align = SZ_4M;
+	} else {
+		mask = ION_HEAP(ION_PIL1_HEAP_ID);
+		align = SZ_1M;
+	}
+
+	region = ion_alloc(ion, size, align, mask, 0);
+	if (IS_ERR(region)) {
+		pil_err(priv->desc, "Failed to allocate relocatable region\n");
+		return PTR_ERR(region);
+	}
+
+	ret = ion_phys(ion, region, (ion_phys_addr_t *)&priv->region_start,
+			&size);
+	if (ret) {
+		ion_free(ion, region);
+		return ret;
+	}
+
+	priv->region = region;
+	priv->region_end = priv->region_start + size;
+	priv->base_addr = min_addr;
+
 	return 0;
 }
 
-static void pil_proxy_unvote(struct pil_device *pil, unsigned long timeout)
+static int pil_setup_region(struct pil_priv *priv, const struct pil_mdt *mdt)
 {
-	if (pil->desc->ops->proxy_unvote)
-		schedule_delayed_work(&pil->proxy, msecs_to_jiffies(timeout));
+	const struct elf32_phdr *phdr;
+	phys_addr_t min_addr_r, min_addr_n, max_addr_r, max_addr_n, start, end;
+	size_t align = 0;
+	int i, ret = 0;
+	bool relocatable = false;
+
+	min_addr_n = min_addr_r = (phys_addr_t)ULLONG_MAX;
+	max_addr_n = max_addr_r = 0;
+
+	/* Find the image limits */
+	for (i = 0; i < mdt->hdr.e_phnum; i++) {
+		phdr = &mdt->phdr[i];
+		if (!segment_is_loadable(phdr))
+			continue;
+
+		start = phdr->p_paddr;
+		end = start + phdr->p_memsz;
+
+		if (segment_is_relocatable(phdr)) {
+			min_addr_r = min(min_addr_r, start);
+			max_addr_r = max(max_addr_r, end);
+			/*
+			 * Lowest relocatable segment dictates alignment of
+			 * relocatable region
+			 */
+			if (min_addr_r == start)
+				align = phdr->p_align;
+			relocatable = true;
+		} else {
+			min_addr_n = min(min_addr_n, start);
+			max_addr_n = max(max_addr_n, end);
+		}
+
+	}
+
+	if (relocatable) {
+		ret = pil_alloc_region(priv, min_addr_r, max_addr_r, align);
+	} else {
+		priv->region_start = min_addr_n;
+		priv->region_end = max_addr_n;
+		priv->base_addr = min_addr_n;
+	}
+
+	return ret;
+}
+
+static int pil_cmp_seg(void *priv, struct list_head *a, struct list_head *b)
+{
+	struct pil_seg *seg_a = list_entry(a, struct pil_seg, list);
+	struct pil_seg *seg_b = list_entry(b, struct pil_seg, list);
+
+	return seg_a->paddr - seg_b->paddr;
+}
+
+static int pil_init_mmap(struct pil_desc *desc, const struct pil_mdt *mdt)
+{
+	struct pil_priv *priv = desc->priv;
+	const struct elf32_phdr *phdr;
+	struct pil_seg *seg;
+	int i, ret;
+
+	ret = pil_setup_region(priv, mdt);
+	if (ret)
+		return ret;
+
+	for (i = 0; i < mdt->hdr.e_phnum; i++) {
+		phdr = &mdt->phdr[i];
+		if (!segment_is_loadable(phdr))
+			continue;
+
+		seg = pil_init_seg(desc, phdr, i);
+		if (IS_ERR(seg))
+			return PTR_ERR(seg);
+
+		list_add_tail(&seg->list, &priv->segs);
+	}
+	list_sort(NULL, &priv->segs, pil_cmp_seg);
+
+	return pil_init_entry_addr(priv, mdt);
+}
+
+static void pil_release_mmap(struct pil_desc *desc)
+{
+	struct pil_priv *priv = desc->priv;
+	struct pil_seg *p, *tmp;
+
+	if (priv->region)
+		ion_free(ion, priv->region);
+	list_for_each_entry_safe(p, tmp, &priv->segs, list) {
+		list_del(&p->list);
+		kfree(p);
+	}
 }
 
 #define IOMAP_SIZE SZ_4M
 
-static int load_segment(const struct elf32_phdr *phdr, unsigned num,
-		struct pil_device *pil)
+static int pil_load_seg(struct pil_desc *desc, struct pil_seg *seg)
 {
 	int ret = 0, count, paddr;
 	char fw_name[30];
 	const struct firmware *fw = NULL;
 	const u8 *data;
+	int num = seg->num;
 
-	if (memblock_overlaps_memory(phdr->p_paddr, phdr->p_memsz)) {
-		dev_err(&pil->dev, "%s: kernel memory would be overwritten "
-			"[%#08lx, %#08lx)\n", pil->desc->name,
-			(unsigned long)phdr->p_paddr,
-			(unsigned long)(phdr->p_paddr + phdr->p_memsz));
-		return -EPERM;
-	}
-
-	if (phdr->p_filesz) {
+	if (seg->filesz) {
 		snprintf(fw_name, ARRAY_SIZE(fw_name), "%s.b%02d",
-				pil->desc->name, num);
-		ret = request_firmware(&fw, fw_name, &pil->dev);
+				desc->name, num);
+		ret = request_firmware(&fw, fw_name, desc->dev);
 		if (ret) {
-			dev_err(&pil->dev, "%s: Failed to locate blob %s\n",
-					pil->desc->name, fw_name);
+			pil_err(desc, "Failed to locate blob %s\n", fw_name);
 			return ret;
 		}
 
-		if (fw->size != phdr->p_filesz) {
-			dev_err(&pil->dev, "%s: Blob size %u doesn't match "
-					"%u\n", pil->desc->name, fw->size,
-					phdr->p_filesz);
+		if (fw->size != seg->filesz) {
+			pil_err(desc, "Blob size %u doesn't match %lu\n",
+					fw->size, seg->filesz);
 			ret = -EPERM;
 			goto release_fw;
 		}
 	}
 
 	/* Load the segment into memory */
-	count = phdr->p_filesz;
-	paddr = phdr->p_paddr;
+	count = seg->filesz;
+	paddr = seg->paddr;
 	data = fw ? fw->data : NULL;
 	while (count > 0) {
 		int size;
@@ -175,8 +426,7 @@ static int load_segment(const struct elf32_phdr *phdr, unsigned num,
 		size = min_t(size_t, IOMAP_SIZE, count);
 		buf = ioremap(paddr, size);
 		if (!buf) {
-			dev_err(&pil->dev, "%s: Failed to map memory\n",
-					pil->desc->name);
+			pil_err(desc, "Failed to map memory\n");
 			ret = -ENOMEM;
 			goto release_fw;
 		}
@@ -189,7 +439,7 @@ static int load_segment(const struct elf32_phdr *phdr, unsigned num,
 	}
 
 	/* Zero out trailing memory */
-	count = phdr->p_memsz - phdr->p_filesz;
+	count = seg->sz - seg->filesz;
 	while (count > 0) {
 		int size;
 		u8 __iomem *buf;
@@ -197,8 +447,7 @@ static int load_segment(const struct elf32_phdr *phdr, unsigned num,
 		size = min_t(size_t, IOMAP_SIZE, count);
 		buf = ioremap(paddr, size);
 		if (!buf) {
-			dev_err(&pil->dev, "%s: Failed to map memory\n",
-					pil->desc->name);
+			pil_err(desc, "Failed to map memory\n");
 			ret = -ENOMEM;
 			goto release_fw;
 		}
@@ -209,12 +458,10 @@ static int load_segment(const struct elf32_phdr *phdr, unsigned num,
 		paddr += size;
 	}
 
-	if (pil->desc->ops->verify_blob) {
-		ret = pil->desc->ops->verify_blob(pil->desc, phdr->p_paddr,
-					  phdr->p_memsz);
+	if (desc->ops->verify_blob) {
+		ret = desc->ops->verify_blob(desc, seg->paddr, seg->sz);
 		if (ret)
-			dev_err(&pil->dev, "%s: Blob%u failed verification\n",
-				pil->desc->name, num);
+			pil_err(desc, "Blob%u failed verification\n", num);
 	}
 
 release_fw:
@@ -222,431 +469,180 @@ release_fw:
 	return ret;
 }
 
-#define segment_is_hash(flag) (((flag) & (0x7 << 24)) == (0x2 << 24))
-
-static int segment_is_loadable(const struct elf32_phdr *p)
-{
-	return (p->p_type & PT_LOAD) && !segment_is_hash(p->p_flags);
-}
-
-/* Sychronize request_firmware() with suspend */
+/* Synchronize request_firmware() with suspend */
 static DECLARE_RWSEM(pil_pm_rwsem);
 
-static int load_image(struct pil_device *pil)
+/**
+ * pil_boot() - Load a peripheral image into memory and boot it
+ * @desc: descriptor from pil_desc_init()
+ *
+ * Returns 0 on success or -ERROR on failure.
+ */
+int pil_boot(struct pil_desc *desc)
 {
-	int i, ret;
+	int ret;
 	char fw_name[30];
-	struct elf32_hdr *ehdr;
-	const struct elf32_phdr *phdr;
+	const struct pil_mdt *mdt;
+	const struct elf32_hdr *ehdr;
+	struct pil_seg *seg;
 	const struct firmware *fw;
-	unsigned long proxy_timeout = pil->desc->proxy_timeout;
+	unsigned long proxy_timeout = desc->proxy_timeout;
+	struct pil_priv *priv = desc->priv;
+
+	/* Reinitialize for new image */
+	pil_release_mmap(desc);
 
 	down_read(&pil_pm_rwsem);
-	snprintf(fw_name, sizeof(fw_name), "%s.mdt", pil->desc->name);
-	ret = request_firmware(&fw, fw_name, &pil->dev);
+	snprintf(fw_name, sizeof(fw_name), "%s.mdt", desc->name);
+	ret = request_firmware(&fw, fw_name, desc->dev);
 	if (ret) {
-		dev_err(&pil->dev, "%s: Failed to locate %s\n",
-				pil->desc->name, fw_name);
+		pil_err(desc, "Failed to locate %s\n", fw_name);
 		goto out;
 	}
 
 	if (fw->size < sizeof(*ehdr)) {
-		dev_err(&pil->dev, "%s: Not big enough to be an elf header\n",
-				pil->desc->name);
+		pil_err(desc, "Not big enough to be an elf header\n");
 		ret = -EIO;
 		goto release_fw;
 	}
 
-	ehdr = (struct elf32_hdr *)fw->data;
+	mdt = (const struct pil_mdt *)fw->data;
+	ehdr = &mdt->hdr;
+
 	if (memcmp(ehdr->e_ident, ELFMAG, SELFMAG)) {
-		dev_err(&pil->dev, "%s: Not an elf header\n", pil->desc->name);
+		pil_err(desc, "Not an elf header\n");
 		ret = -EIO;
 		goto release_fw;
 	}
 
 	if (ehdr->e_phnum == 0) {
-		dev_err(&pil->dev, "%s: No loadable segments\n",
-				pil->desc->name);
+		pil_err(desc, "No loadable segments\n");
 		ret = -EIO;
 		goto release_fw;
 	}
 	if (sizeof(struct elf32_phdr) * ehdr->e_phnum +
 	    sizeof(struct elf32_hdr) > fw->size) {
-		dev_err(&pil->dev, "%s: Program headers not within mdt\n",
-				pil->desc->name);
+		pil_err(desc, "Program headers not within mdt\n");
 		ret = -EIO;
 		goto release_fw;
 	}
 
-	ret = pil->desc->ops->init_image(pil->desc, fw->data, fw->size);
+	ret = pil_init_mmap(desc, mdt);
+	if (ret)
+		goto release_fw;
+
+	if (desc->ops->init_image)
+		ret = desc->ops->init_image(desc, fw->data, fw->size);
 	if (ret) {
-		dev_err(&pil->dev, "%s: Invalid firmware metadata\n",
-				pil->desc->name);
+		pil_err(desc, "Invalid firmware metadata\n");
 		goto release_fw;
 	}
 
-	phdr = (const struct elf32_phdr *)(fw->data + sizeof(struct elf32_hdr));
-	for (i = 0; i < ehdr->e_phnum; i++, phdr++) {
-		if (!segment_is_loadable(phdr))
-			continue;
+	if (desc->ops->mem_setup)
+		ret = desc->ops->mem_setup(desc, priv->region_start,
+				priv->region_end - priv->region_start);
+	if (ret) {
+		pil_err(desc, "Memory setup error\n");
+		goto release_fw;
+	}
 
-		ret = load_segment(phdr, i, pil);
-		if (ret) {
-			dev_err(&pil->dev, "%s: Failed to load segment %d\n",
-					pil->desc->name, i);
+	list_for_each_entry(seg, &desc->priv->segs, list) {
+		ret = pil_load_seg(desc, seg);
+		if (ret)
 			goto release_fw;
-		}
 	}
 
-	ret = pil_proxy_vote(pil);
+	ret = pil_proxy_vote(desc);
 	if (ret) {
-		dev_err(&pil->dev, "%s: Failed to proxy vote\n",
-					pil->desc->name);
+		pil_err(desc, "Failed to proxy vote\n");
 		goto release_fw;
 	}
 
-	ret = pil->desc->ops->auth_and_reset(pil->desc);
+	ret = desc->ops->auth_and_reset(desc);
 	if (ret) {
-		dev_err(&pil->dev, "%s: Failed to bring out of reset\n",
-				pil->desc->name);
+		pil_err(desc, "Failed to bring out of reset\n");
 		proxy_timeout = 0; /* Remove proxy vote immediately on error */
 		goto err_boot;
 	}
-	dev_info(&pil->dev, "%s: Brought out of reset\n", pil->desc->name);
+	pil_info(desc, "Brought out of reset\n");
 err_boot:
-	pil_proxy_unvote(pil, proxy_timeout);
+	pil_proxy_unvote(desc, proxy_timeout);
 release_fw:
 	release_firmware(fw);
 out:
 	up_read(&pil_pm_rwsem);
+	if (ret)
+		pil_release_mmap(desc);
 	return ret;
 }
-
-static void pil_set_state(struct pil_device *pil, enum pil_state state)
-{
-	if (pil->state != state) {
-		pil->state = state;
-		sysfs_notify(&pil->dev.kobj, NULL, "state");
-	}
-}
+EXPORT_SYMBOL(pil_boot);
 
 /**
- * pil_get() - Load a peripheral into memory and take it out of reset
- * @name: pointer to a string containing the name of the peripheral to load
- *
- * This function returns a pointer if it succeeds. If an error occurs an
- * ERR_PTR is returned.
- *
- * If PIL is not enabled in the kernel, the value %NULL will be returned.
+ * pil_shutdown() - Shutdown a peripheral
+ * @desc: descriptor from pil_desc_init()
  */
-void *pil_get(const char *name)
+void pil_shutdown(struct pil_desc *desc)
 {
-	int ret;
-	struct pil_device *pil;
-	struct pil_device *pil_d;
-	void *retval;
-
-	if (!name)
-		return NULL;
-
-	pil = retval = find_peripheral(name);
-	if (!pil)
-		return ERR_PTR(-ENODEV);
-	if (!try_module_get(pil->owner)) {
-		put_device(&pil->dev);
-		return ERR_PTR(-ENODEV);
-	}
-
-	pil_d = pil_get(pil->desc->depends_on);
-	if (IS_ERR(pil_d)) {
-		retval = pil_d;
-		goto err_depends;
-	}
-
-	mutex_lock(&pil->lock);
-	if (!pil->count) {
-		ret = load_image(pil);
-		if (ret) {
-			retval = ERR_PTR(ret);
-			goto err_load;
-		}
-	}
-	pil->count++;
-	pil_set_state(pil, PIL_ONLINE);
-	mutex_unlock(&pil->lock);
-out:
-	return retval;
-err_load:
-	mutex_unlock(&pil->lock);
-	pil_put(pil_d);
-err_depends:
-	put_device(&pil->dev);
-	module_put(pil->owner);
-	goto out;
-}
-EXPORT_SYMBOL(pil_get);
-
-static void pil_shutdown(struct pil_device *pil)
-{
-	pil->desc->ops->shutdown(pil->desc);
-	flush_delayed_work(&pil->proxy);
-	pil_set_state(pil, PIL_OFFLINE);
-}
-
-/**
- * pil_put() - Inform PIL the peripheral no longer needs to be active
- * @peripheral_handle: pointer from a previous call to pil_get()
- *
- * This doesn't imply that a peripheral is shutdown or in reset since another
- * driver could be using the peripheral.
- */
-void pil_put(void *peripheral_handle)
-{
-	struct pil_device *pil_d, *pil = peripheral_handle;
-
-	if (IS_ERR_OR_NULL(pil))
-		return;
-
-	mutex_lock(&pil->lock);
-	if (WARN(!pil->count, "%s: %s: Reference count mismatch\n",
-			pil->desc->name, __func__))
-		goto err_out;
-	if (!--pil->count)
-		pil_shutdown(pil);
-	mutex_unlock(&pil->lock);
-
-	pil_d = find_peripheral(pil->desc->depends_on);
-	module_put(pil->owner);
-	if (pil_d) {
-		pil_put(pil_d);
-		put_device(&pil_d->dev);
-	}
-	put_device(&pil->dev);
-	return;
-err_out:
-	mutex_unlock(&pil->lock);
-	return;
-}
-EXPORT_SYMBOL(pil_put);
-
-void pil_force_shutdown(const char *name)
-{
-	struct pil_device *pil;
-
-	pil = find_peripheral(name);
-	if (!pil) {
-		pr_err("%s: Couldn't find %s\n", __func__, name);
-		return;
-	}
-
-	mutex_lock(&pil->lock);
-	if (!WARN(!pil->count, "%s: %s: Reference count mismatch\n",
-			pil->desc->name, __func__))
-		pil_shutdown(pil);
-	mutex_unlock(&pil->lock);
-
-	put_device(&pil->dev);
-}
-EXPORT_SYMBOL(pil_force_shutdown);
-
-int pil_force_boot(const char *name)
-{
-	int ret = -EINVAL;
-	struct pil_device *pil;
-
-	pil = find_peripheral(name);
-	if (!pil) {
-		pr_err("%s: Couldn't find %s\n", __func__, name);
-		return -EINVAL;
-	}
-
-	mutex_lock(&pil->lock);
-	if (!WARN(!pil->count, "%s: %s: Reference count mismatch\n",
-			pil->desc->name, __func__))
-		ret = load_image(pil);
-	if (!ret)
-		pil_set_state(pil, PIL_ONLINE);
-	mutex_unlock(&pil->lock);
-	put_device(&pil->dev);
-
-	return ret;
-}
-EXPORT_SYMBOL(pil_force_boot);
-
-#ifdef CONFIG_DEBUG_FS
-static int msm_pil_debugfs_open(struct inode *inode, struct file *filp)
-{
-	filp->private_data = inode->i_private;
-	return 0;
-}
-
-static ssize_t msm_pil_debugfs_read(struct file *filp, char __user *ubuf,
-		size_t cnt, loff_t *ppos)
-{
-	int r;
-	char buf[40];
-	struct pil_device *pil = filp->private_data;
-
-	mutex_lock(&pil->lock);
-	r = snprintf(buf, sizeof(buf), "%d\n", pil->count);
-	mutex_unlock(&pil->lock);
-	return simple_read_from_buffer(ubuf, cnt, ppos, buf, r);
-}
-
-static ssize_t msm_pil_debugfs_write(struct file *filp,
-		const char __user *ubuf, size_t cnt, loff_t *ppos)
-{
-	struct pil_device *pil = filp->private_data;
-	char buf[4];
-
-	if (cnt > sizeof(buf))
-		return -EINVAL;
-
-	if (copy_from_user(&buf, ubuf, cnt))
-		return -EFAULT;
-
-	if (!strncmp(buf, "get", 3)) {
-		if (IS_ERR(pil_get(pil->desc->name)))
-			return -EIO;
-	} else if (!strncmp(buf, "put", 3))
-		pil_put(pil);
+	struct pil_priv *priv = desc->priv;
+	desc->ops->shutdown(desc);
+	if (proxy_timeout_ms == 0 && desc->ops->proxy_unvote)
+		desc->ops->proxy_unvote(desc);
 	else
-		return -EINVAL;
-
-	return cnt;
+		flush_delayed_work(&priv->proxy);
 }
+EXPORT_SYMBOL(pil_shutdown);
 
-static const struct file_operations msm_pil_debugfs_fops = {
-	.open	= msm_pil_debugfs_open,
-	.read	= msm_pil_debugfs_read,
-	.write	= msm_pil_debugfs_write,
-};
-
-static struct dentry *pil_base_dir;
-
-static int __init msm_pil_debugfs_init(void)
+/**
+ * pil_desc_init() - Initialize a pil descriptor
+ * @desc: descriptor to intialize
+ *
+ * Initialize a pil descriptor for use by other pil functions. This function
+ * must be called before calling pil_boot() or pil_shutdown().
+ *
+ * Returns 0 for success and -ERROR on failure.
+ */
+int pil_desc_init(struct pil_desc *desc)
 {
-	pil_base_dir = debugfs_create_dir("pil", NULL);
-	if (!pil_base_dir) {
-		pil_base_dir = NULL;
-		return -ENOMEM;
-	}
-
-	return 0;
-}
-
-static void __exit msm_pil_debugfs_exit(void)
-{
-	debugfs_remove_recursive(pil_base_dir);
-}
-
-static int msm_pil_debugfs_add(struct pil_device *pil)
-{
-	if (!pil_base_dir)
-		return -ENOMEM;
-
-	pil->dentry = debugfs_create_file(pil->desc->name, S_IRUGO | S_IWUSR,
-				pil_base_dir, pil, &msm_pil_debugfs_fops);
-	return !pil->dentry ? -ENOMEM : 0;
-}
-
-static void msm_pil_debugfs_remove(struct pil_device *pil)
-{
-	debugfs_remove(pil->dentry);
-}
-#else
-static int __init msm_pil_debugfs_init(void) { return 0; };
-static void __exit msm_pil_debugfs_exit(void) { return 0; };
-static int msm_pil_debugfs_add(struct pil_device *pil) { return 0; }
-static void msm_pil_debugfs_remove(struct pil_device *pil) { }
-#endif
-
-static int __msm_pil_shutdown(struct device *dev, void *data)
-{
-	pil_shutdown(to_pil_device(dev));
-	return 0;
-}
-
-static int msm_pil_shutdown_at_boot(void)
-{
-	return bus_for_each_dev(&pil_bus_type, NULL, NULL, __msm_pil_shutdown);
-}
-late_initcall(msm_pil_shutdown_at_boot);
-
-static void pil_device_release(struct device *dev)
-{
-	struct pil_device *pil = to_pil_device(dev);
-	wake_lock_destroy(&pil->wlock);
-	mutex_destroy(&pil->lock);
-	kfree(pil);
-}
-
-struct pil_device *msm_pil_register(struct pil_desc *desc)
-{
-	int err;
-	static atomic_t pil_count = ATOMIC_INIT(-1);
-	struct pil_device *pil;
+	struct pil_priv *priv;
 
 	/* Ignore users who don't make any sense */
+	WARN(desc->ops->proxy_unvote && !desc->proxy_timeout,
+			"A proxy timeout of 0 was specified.\n");
 	if (WARN(desc->ops->proxy_unvote && !desc->ops->proxy_vote,
-				"invalid proxy voting. ignoring\n"))
+				"Invalid proxy voting. Ignoring\n"))
 		((struct pil_reset_ops *)desc->ops)->proxy_unvote = NULL;
 
-	WARN(desc->ops->proxy_unvote && !desc->proxy_timeout,
-		"A proxy timeout of 0 ms was specified for %s. Specify one in "
-		"desc->proxy_timeout.\n", desc->name);
+	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
+	if (!priv)
+		return -ENOMEM;
+	desc->priv = priv;
+	priv->desc = desc;
 
-	pil = kzalloc(sizeof(*pil), GFP_KERNEL);
-	if (!pil)
-		return ERR_PTR(-ENOMEM);
+	snprintf(priv->wname, sizeof(priv->wname), "pil-%s", desc->name);
+	wake_lock_init(&priv->wlock, WAKE_LOCK_SUSPEND, priv->wname);
+	INIT_DELAYED_WORK(&priv->proxy, pil_proxy_work);
+	INIT_LIST_HEAD(&priv->segs);
 
-	mutex_init(&pil->lock);
-	pil->desc = desc;
-	pil->owner = desc->owner;
-	pil->dev.parent = desc->dev;
-	pil->dev.bus = &pil_bus_type;
-	pil->dev.release = pil_device_release;
-
-	snprintf(pil->wake_name, sizeof(pil->wake_name), "pil-%s", desc->name);
-	wake_lock_init(&pil->wlock, WAKE_LOCK_SUSPEND, pil->wake_name);
-	INIT_DELAYED_WORK(&pil->proxy, pil_proxy_work);
-
-	dev_set_name(&pil->dev, "pil%d", atomic_inc_return(&pil_count));
-	err = device_register(&pil->dev);
-	if (err) {
-		put_device(&pil->dev);
-		wake_lock_destroy(&pil->wlock);
-		mutex_destroy(&pil->lock);
-		kfree(pil);
-		return ERR_PTR(err);
-	}
-
-	err = msm_pil_debugfs_add(pil);
-	if (err) {
-		device_unregister(&pil->dev);
-		return ERR_PTR(err);
-	}
-
-	return pil;
+	return 0;
 }
-EXPORT_SYMBOL(msm_pil_register);
+EXPORT_SYMBOL(pil_desc_init);
 
-void msm_pil_unregister(struct pil_device *pil)
+/**
+ * pil_desc_release() - Release a pil descriptor
+ * @desc: descriptor to free
+ */
+void pil_desc_release(struct pil_desc *desc)
 {
-	if (IS_ERR_OR_NULL(pil))
-		return;
+	struct pil_priv *priv = desc->priv;
 
-	if (get_device(&pil->dev)) {
-		mutex_lock(&pil->lock);
-		WARN_ON(pil->count);
-		flush_delayed_work_sync(&pil->proxy);
-		msm_pil_debugfs_remove(pil);
-		device_unregister(&pil->dev);
-		mutex_unlock(&pil->lock);
-		put_device(&pil->dev);
+	if (priv) {
+		flush_delayed_work(&priv->proxy);
+		wake_lock_destroy(&priv->wlock);
 	}
+	desc->priv = NULL;
+	kfree(priv);
 }
-EXPORT_SYMBOL(msm_pil_unregister);
+EXPORT_SYMBOL(pil_desc_release);
 
 static int pil_pm_notify(struct notifier_block *b, unsigned long event, void *p)
 {
@@ -667,19 +663,18 @@ static struct notifier_block pil_pm_notifier = {
 
 static int __init msm_pil_init(void)
 {
-	int ret = msm_pil_debugfs_init();
-	if (ret)
-		return ret;
-	register_pm_notifier(&pil_pm_notifier);
-	return bus_register(&pil_bus_type);
+	ion = msm_ion_client_create(UINT_MAX, "pil");
+	if (IS_ERR(ion)) /* Can't support relocatable images */
+		ion = NULL;
+	return register_pm_notifier(&pil_pm_notifier);
 }
-subsys_initcall(msm_pil_init);
+device_initcall(msm_pil_init);
 
 static void __exit msm_pil_exit(void)
 {
-	bus_unregister(&pil_bus_type);
 	unregister_pm_notifier(&pil_pm_notifier);
-	msm_pil_debugfs_exit();
+	if (ion)
+		ion_client_destroy(ion);
 }
 module_exit(msm_pil_exit);
 

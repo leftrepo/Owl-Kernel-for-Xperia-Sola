@@ -19,7 +19,7 @@
 #include <linux/module.h>
 #include <asm/mach-types.h>
 #include <mach/msm_iomap.h>
-#include <mach/board.h>
+#include <mach/camera.h>
 #include <mach/irqs-7xxx.h>
 #include "devices-msm7x2xa.h"
 #include "board-msm7627a.h"
@@ -139,12 +139,14 @@ static struct msm_camera_sensor_info msm_camera_sensor_s5k4e1_data;
 
 struct msm_camera_device_platform_data msm_camera_device_data_csi1[] = {
 	{
+		.csiphy_core = 1,
 		.csid_core = 1,
 		.ioclk = {
 			.vfe_clk_rate = 192000000,
 		},
 	},
 	{
+		.csiphy_core = 1,
 		.csid_core = 1,
 		.ioclk = {
 			.vfe_clk_rate = 266667000,
@@ -154,12 +156,14 @@ struct msm_camera_device_platform_data msm_camera_device_data_csi1[] = {
 
 struct msm_camera_device_platform_data msm_camera_device_data_csi0[] = {
 	{
+		.csiphy_core = 0,
 		.csid_core = 0,
 		.ioclk = {
 			.vfe_clk_rate = 192000000,
 		},
 	},
 	{
+		.csiphy_core = 0,
 		.csid_core = 0,
 		.ioclk = {
 			.vfe_clk_rate = 266667000,
@@ -281,8 +285,15 @@ static struct msm_camera_gpio_conf gpio_conf_ov8825 = {
 	.gpio_no_mux = 1,
 };
 
+static struct msm_camera_sensor_flash_src msm_flash_src_ov8825 = {
+	.flash_sr_type = MSM_CAMERA_FLASH_SRC_LED1,
+	._fsrc.ext_driver_src.led_en = 13,
+	._fsrc.ext_driver_src.led_flash_en = 32,
+};
+
 static struct msm_camera_sensor_flash_data flash_ov8825 = {
-	.flash_type     = MSM_CAMERA_FLASH_NONE,
+	.flash_type     = MSM_CAMERA_FLASH_LED,
+	.flash_src      = &msm_flash_src_ov8825,
 };
 
 static struct msm_camera_sensor_platform_info sensor_board_info_ov8825 = {
@@ -290,6 +301,14 @@ static struct msm_camera_sensor_platform_info sensor_board_info_ov8825 = {
 	.cam_vreg = msm_cam_vreg,
 	.num_vreg = ARRAY_SIZE(msm_cam_vreg),
 	.gpio_conf = &gpio_conf_ov8825,
+};
+
+static struct msm_actuator_info msm_act_main_cam_3_info = {
+	.board_info     = &msm_act_main_cam_i2c_info,
+	.cam_name   = MSM_ACTUATOR_MAIN_CAM_3,
+	.bus_id         = MSM_GSBI0_QUP_I2C_BUS_ID,
+	.vcm_pwd        = GPIO_SKU3_CAM_5MP_CAM_DRIVER_PWDN,
+	.vcm_enable     = 0,
 };
 
 static struct msm_camera_sensor_info msm_camera_sensor_ov8825_data = {
@@ -303,6 +322,8 @@ static struct msm_camera_sensor_info msm_camera_sensor_ov8825_data = {
 	.sensor_platform_info = &sensor_board_info_ov8825,
 	.csi_if = 1,
 	.camera_type = BACK_CAMERA_2D,
+	.sensor_type = BAYER_SENSOR,
+	.actuator_info = &msm_act_main_cam_3_info,
 };
 
 #ifdef CONFIG_MT9E013
@@ -379,8 +400,11 @@ static void __init msm7x27a_init_cam(void)
 		sensor_board_info_ov8825.num_vreg = 0;
 
 	}
-	if (machine_is_msm8625_evb()
-			|| machine_is_msm8625_evt()) {
+	if (machine_is_msm8625_evb() || machine_is_msm7627a_evb()
+				||  machine_is_msm8625_evt()
+				|| machine_is_msm7627a_qrd3()
+				|| machine_is_msm8625_qrd7()
+				|| machine_is_qrd_skud_prime()) {
 		sensor_board_info_ov7692.cam_vreg =
 			ov7692_gpio_vreg;
 		sensor_board_info_ov7692.num_vreg =
@@ -397,7 +421,8 @@ static void __init msm7x27a_init_cam(void)
 	platform_device_register(&msm_camera_server);
 	if (machine_is_msm8625_surf() || machine_is_msm8625_evb()
 			|| machine_is_msm8625_evt()
-			|| machine_is_msm8625_qrd7()) {
+			|| machine_is_msm8625_qrd7()
+			|| machine_is_qrd_skud_prime()) {
 		platform_device_register(&msm8625_device_csic0);
 		platform_device_register(&msm8625_device_csic1);
 	} else {
@@ -406,7 +431,8 @@ static void __init msm7x27a_init_cam(void)
 	}
 	if (machine_is_msm8625_evb()
 			|| machine_is_msm8625_evt()
-			|| machine_is_msm8625_qrd7())
+			|| machine_is_msm8625_qrd7()
+			|| machine_is_qrd_skud_prime())
 		*(int *) msm7x27a_device_clkctl.dev.platform_data = 1;
 	platform_device_register(&msm7x27a_device_clkctl);
 	platform_device_register(&msm7x27a_device_vfe);
@@ -1152,7 +1178,6 @@ void __init msm7627a_camera_init(void)
 #ifndef CONFIG_MSM_CAMERA_V4L2
 	int rc;
 #endif
-
 	pr_debug("msm7627a_camera_init Entered\n");
 
 	if (machine_is_msm7627a_qrd3() || machine_is_msm8625_qrd7()) {
@@ -1171,7 +1196,8 @@ void __init msm7627a_camera_init(void)
 	if (machine_is_msm7627a_evb() || machine_is_msm8625_evb()
 			|| machine_is_msm8625_evt()
 			|| machine_is_msm7627a_qrd3()
-			|| machine_is_msm8625_qrd7()) {
+			|| machine_is_msm8625_qrd7()
+			|| machine_is_qrd_skud_prime()) {
 #ifndef CONFIG_MSM_CAMERA_V4L2
 		lcd_camera_power_init();
 #endif
@@ -1187,7 +1213,8 @@ void __init msm7627a_camera_init(void)
 			|| machine_is_msm8625_evb()
 			|| machine_is_msm8625_evt()
 			|| machine_is_msm7627a_qrd3()
-			|| machine_is_msm8625_qrd7()) {
+			|| machine_is_msm8625_qrd7()
+			|| machine_is_qrd_skud_prime()) {
 		platform_add_devices(camera_devices_evb,
 				ARRAY_SIZE(camera_devices_evb));
 	} else if (machine_is_msm7627a_qrd3())
@@ -1200,7 +1227,8 @@ void __init msm7627a_camera_init(void)
 					|| !machine_is_msm8625_evb()
 					|| !machine_is_msm8625_evt()
 					|| !machine_is_msm7627a_qrd3()
-					|| !machine_is_msm8625_qrd7())
+					|| !machine_is_msm8625_qrd7()
+					|| !machine_is_qrd_skud_prime())
 		register_i2c_devices();
 #ifndef CONFIG_MSM_CAMERA_V4L2
 	rc = regulator_bulk_get(NULL, ARRAY_SIZE(regs_camera), regs_camera);
@@ -1230,7 +1258,8 @@ void __init msm7627a_camera_init(void)
 			|| machine_is_msm8625_evb()
 			|| machine_is_msm8625_evt()
 			|| machine_is_msm7627a_qrd3()
-			|| machine_is_msm8625_qrd7()) {
+			|| machine_is_msm8625_qrd7()
+			|| machine_is_qrd_skud_prime()) {
 		pr_debug("machine_is_msm7627a_evb i2c_register_board_info\n");
 		i2c_register_board_info(MSM_GSBI0_QUP_I2C_BUS_ID,
 				i2c_camera_devices_evb,

@@ -21,10 +21,8 @@
 #include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/init.h>
-#include <linux/pm.h>
 #include <linux/pm_qos.h>
 #include <linux/suspend.h>
-#include <linux/reboot.h>
 #include <linux/io.h>
 #include <linux/tick.h>
 #include <linux/memory.h>
@@ -34,7 +32,6 @@
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
 #endif
-#include <asm/system_misc.h>
 #ifdef CONFIG_CACHE_L2X0
 #include <asm/hardware/cache-l2x0.h>
 #endif
@@ -155,6 +152,7 @@ static char *msm_pm_sleep_mode_labels[MSM_PM_SLEEP_MODE_NR] = {
 
 static struct msm_pm_platform_data *msm_pm_modes;
 static struct msm_pm_irq_calls *msm_pm_irq_extns;
+static struct msm_pm_cpr_ops *msm_cpr_ops;
 
 struct msm_pm_kobj_attribute {
 	unsigned int cpu;
@@ -418,6 +416,11 @@ void __init msm_pm_set_irq_extns(struct msm_pm_irq_calls *irq_calls)
 	msm_pm_irq_extns = irq_calls;
 }
 
+void __init msm_pm_set_cpr_ops(struct msm_pm_cpr_ops *ops)
+{
+	msm_cpr_ops = ops;
+}
+
 /******************************************************************************
  * Sleep Limitations
  *****************************************************************************/
@@ -479,66 +482,71 @@ static void msm_pm_config_hw_before_power_down(void)
  * Program the top csr from core0 context to put the
  * core1 into GDFS, as core1 is not running yet.
  */
-static void configure_top_csr(void)
+static void msm_pm_configure_top_csr(void)
 {
+	/*
+	 * Enable TCSR for core
+	 * Set reset bit for SPM
+	 * Set CLK_OFF bit
+	 * Set clamps bit
+	 * Set power_up bit
+	 * Disable TSCR for core
+	 */
+	uint32_t bit_pos[][6] = {
+		/* c2 */
+		{17, 15, 13, 16, 14, 17},
+		/* c1 & c3*/
+		{22, 20, 18, 21, 19, 22},
+	};
+	uint32_t mpa5_cfg_ctl[2] = {0x30, 0x48};
 	void __iomem *base_ptr;
 	unsigned int value = 0;
+	unsigned int cpu;
+	int i;
 
-	base_ptr = core1_reset_base();
-	if (!base_ptr)
-		return;
-
-	/* bring the core1 out of reset */
-	__raw_writel(0x3, base_ptr);
-	mb();
-	/*
-	 * override DBGNOPOWERDN and program the GDFS
-	 * count val
-	 */
-
-	 __raw_writel(0x00030002, (MSM_CFG_CTL_BASE + 0x38));
-	mb();
-
-	/* Initialize the SPM0 and SPM1 registers */
+	/* Initialize all the SPM registers */
 	msm_spm_reinit();
 
-	/* enable TCSR for core1 */
-	value = __raw_readl((MSM_CFG_CTL_BASE + MPA5_CFG_CTL_REG));
-	value |= BIT(22);
-	__raw_writel(value,  MSM_CFG_CTL_BASE + MPA5_CFG_CTL_REG);
-	mb();
+	for_each_possible_cpu(cpu) {
+		/* skip for C0 */
+		if (!cpu)
+			continue;
 
-	/* set reset bit for SPM1 */
-	value = __raw_readl((MSM_CFG_CTL_BASE + MPA5_CFG_CTL_REG));
-	value |= BIT(20);
-	__raw_writel(value,  MSM_CFG_CTL_BASE + MPA5_CFG_CTL_REG);
-	mb();
+		base_ptr = core_reset_base(cpu);
+		if (!base_ptr)
+			return;
 
-	/* set CLK_OFF bit */
-	value = __raw_readl((MSM_CFG_CTL_BASE + MPA5_CFG_CTL_REG));
-	value |= BIT(18);
-	__raw_writel(value,  MSM_CFG_CTL_BASE + MPA5_CFG_CTL_REG);
-	mb();
+		/* bring the core out of reset */
+		__raw_writel(0x3, base_ptr);
+		mb();
 
-	/* set clamps bit */
-	value = __raw_readl((MSM_CFG_CTL_BASE + MPA5_CFG_CTL_REG));
-	value |= BIT(21);
-	__raw_writel(value,  MSM_CFG_CTL_BASE + MPA5_CFG_CTL_REG);
-	mb();
+		/*
+		 * i == 0, Enable TCSR for core
+		 * i == 1, Set reset bit for SPM
+		 * i == 2, Set CLK_OFF bit
+		 * i == 3, Set clamps bit
+		 * i == 4, Set power_up bit
+		 */
+		for (i = 0; i < 5; i++) {
+			value = __raw_readl(MSM_CFG_CTL_BASE +
+							mpa5_cfg_ctl[cpu/2]);
+			value |= BIT(bit_pos[cpu%2][i]);
+			__raw_writel(value,  MSM_CFG_CTL_BASE +
+							mpa5_cfg_ctl[cpu/2]);
+			mb();
+		}
 
-	/* set power_up bit */
-	value = __raw_readl((MSM_CFG_CTL_BASE + MPA5_CFG_CTL_REG));
-	value |= BIT(19);
-	__raw_writel(value,  MSM_CFG_CTL_BASE + MPA5_CFG_CTL_REG);
-	mb();
+		/* i == 5, Disable TCSR for core */
+		value = __raw_readl(MSM_CFG_CTL_BASE +
+						mpa5_cfg_ctl[cpu/2]);
+		value &= ~BIT(bit_pos[cpu%2][i]);
+		__raw_writel(value,  MSM_CFG_CTL_BASE +
+						mpa5_cfg_ctl[cpu/2]);
+		mb();
 
-	/* Disable TSCR for core0 */
-	value = __raw_readl((MSM_CFG_CTL_BASE + MPA5_CFG_CTL_REG));
-	value &= ~BIT(22);
-	__raw_writel(value,  MSM_CFG_CTL_BASE + MPA5_CFG_CTL_REG);
-	mb();
-	__raw_writel(0x0, base_ptr);
-	mb();
+		__raw_writel(0x0, base_ptr);
+		mb();
+	}
 }
 
 /*
@@ -566,7 +574,7 @@ static void msm_pm_config_hw_after_power_up(void)
 			/*
 			 * Program the top csr to put the core1 into GDFS.
 			 */
-			configure_top_csr();
+			msm_pm_configure_top_csr();
 		}
 	} else {
 		__raw_writel(0, APPS_PWRDOWN);
@@ -879,6 +887,10 @@ static int msm_pm_power_collapse
 		WARN_ON(ret);
 	}
 
+	/* Call CPR suspend only for "idlePC" case */
+	if (msm_cpr_ops && from_idle)
+		msm_cpr_ops->cpr_suspend();
+
 	msm_pm_irq_extns->enter_sleep1(true, from_idle,
 						&msm_pm_smem_data->irq_mask);
 	msm_sirc_enter_sleep();
@@ -974,17 +986,38 @@ static int msm_pm_power_collapse
 		/*
 		 * on system reset, default value of MPA5_GDFS_CNT_VAL
 		 * is = 0x0, later modem reprogram this value to
-		 * 0x00030004. Once APPS did a power collapse and
-		 * coming out of it expected value of this register
-		 * always be 0x00030004. Incase if APPS sees the value
-		 * as 0x00030002 consider this case as a modem early
-		 * exit.
+		 * 0x00030004/0x000F0004(8x25Q). Once APPS did
+		 * a power collapse and coming out of it expected value
+		 * of this register always be 0x00030004/0x000F0004(8x25Q).
+		 * Incase if APPS sees the value as 0x00030002/0x000F0002(8x25Q)
+		 * consider this case as a modem early exit.
 		 */
 		val = __raw_readl(MSM_CFG_CTL_BASE + 0x38);
-		if (val != 0x00030002)
-			power_collapsed = 1;
-		else
-			modem_early_exit = 1;
+
+		/* 8x25Q */
+		if (SOCINFO_VERSION_MAJOR(socinfo_get_version()) >= 3) {
+			if (val != 0x000F0002) {
+				power_collapsed = 1;
+				/*
+				 * override DBGNOPOWERDN and program the GDFS
+				 * count val
+				 */
+				 __raw_writel(0x000F0002,
+						 (MSM_CFG_CTL_BASE + 0x38));
+			} else
+				modem_early_exit = 1;
+		} else {
+			if (val != 0x00030002) {
+				power_collapsed = 1;
+				/*
+				 * override DBGNOPOWERDN and program the GDFS
+				 * count val
+				 */
+				 __raw_writel(0x00030002,
+						 (MSM_CFG_CTL_BASE + 0x38));
+			} else
+				modem_early_exit = 1;
+		}
 	}
 
 #ifdef CONFIG_CACHE_L2X0
@@ -1116,6 +1149,10 @@ static int msm_pm_power_collapse
 		WARN_ON(ret);
 	}
 
+	/* Call CPR resume only for "idlePC" case */
+	if (msm_cpr_ops && from_idle)
+		msm_cpr_ops->cpr_resume();
+
 	return 0;
 
 power_collapse_early_exit:
@@ -1167,6 +1204,10 @@ power_collapse_restore_gpio_bail:
 
 	if (collapsed)
 		smd_sleep_exit();
+
+	/* Call CPR resume only for "idlePC" case */
+	if (msm_cpr_ops && from_idle)
+		msm_cpr_ops->cpr_resume();
 
 power_collapse_bail:
 	if (cpu_is_msm8625()) {
@@ -1280,7 +1321,7 @@ static int msm_pm_swfi(bool ramp_acpu)
 
 static int64_t msm_pm_timer_enter_suspend(int64_t *period)
 {
-	int time = 0;
+	int64_t time = 0;
 
 	time = msm_timer_get_sclk_time(period);
 	if (!time)
@@ -1577,55 +1618,6 @@ void msm_pm_cpu_enter_lowpower(unsigned int cpu)
 	}
 }
 
-/******************************************************************************
- * Restart Definitions
- *****************************************************************************/
-
-static uint32_t restart_reason = 0x776655AA;
-
-static void msm_pm_power_off(void)
-{
-	msm_rpcrouter_close();
-	msm_proc_comm(PCOM_POWER_DOWN, 0, 0);
-	for (;;)
-		;
-}
-
-static void msm_pm_restart(char str, const char *cmd)
-{
-	msm_rpcrouter_close();
-	msm_proc_comm(PCOM_RESET_CHIP, &restart_reason, 0);
-
-	for (;;)
-		;
-}
-
-static int msm_reboot_call
-	(struct notifier_block *this, unsigned long code, void *_cmd)
-{
-	if ((code == SYS_RESTART) && _cmd) {
-		char *cmd = _cmd;
-		if (!strcmp(cmd, "bootloader")) {
-			restart_reason = 0x77665500;
-		} else if (!strcmp(cmd, "recovery")) {
-			restart_reason = 0x77665502;
-		} else if (!strcmp(cmd, "eraseflash")) {
-			restart_reason = 0x776655EF;
-		} else if (!strncmp(cmd, "oem-", 4)) {
-			unsigned code = simple_strtoul(cmd + 4, 0, 16) & 0xff;
-			restart_reason = 0x6f656d00 | code;
-		} else {
-			restart_reason = 0x77665501;
-		}
-	}
-	return NOTIFY_DONE;
-}
-
-static struct notifier_block msm_reboot_notifier = {
-	.notifier_call = msm_reboot_call,
-};
-
-
 /*
  * Initialize the power management subsystem.
  *
@@ -1693,10 +1685,6 @@ static int __init msm_pm_init(void)
 		     virt_to_phys(&msm_pm_pc_pgd));
 #endif
 
-	pm_power_off = msm_pm_power_off;
-	arm_pm_restart = msm_pm_restart;
-	register_reboot_notifier(&msm_reboot_notifier);
-
 	msm_pm_smem_data = smem_alloc(SMEM_APPS_DEM_SLAVE_DATA,
 		sizeof(*msm_pm_smem_data));
 	if (msm_pm_smem_data == NULL) {
@@ -1722,12 +1710,16 @@ static int __init msm_pm_init(void)
 
 		/*
 		 * Configure the MPA5_GDFS_CNT_VAL register for
-		 * DBGPWRUPEREQ_OVERRIDE[17:16] = Override the
+		 * DBGPWRUPEREQ_OVERRIDE[19:16] = Override the
 		 * DBGNOPOWERDN for each cpu.
 		 * MPA5_GDFS_CNT_VAL[9:0] = Delay counter for
 		 * GDFS control.
 		 */
-		val = 0x00030002;
+		if (SOCINFO_VERSION_MAJOR(socinfo_get_version()) >= 3)
+			val = 0x000F0002;
+		else
+			val = 0x00030002;
+
 		__raw_writel(val, (MSM_CFG_CTL_BASE + 0x38));
 
 		l2x0_base_addr = MSM_L2CC_BASE;

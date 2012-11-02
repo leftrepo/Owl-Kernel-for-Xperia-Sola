@@ -485,7 +485,7 @@ enum bimc_m_mode {
 };
 
 #define M_PRIOLVL_OVERRIDE_ADDR(b, n) \
-	(M_REG_BASE(b) + (0x4000 * (n)) + 0x00000220)
+	(M_REG_BASE(b) + (0x4000 * (n)) + 0x00000230)
 enum bimc_m_priolvl_override {
 	M_PRIOLVL_OVERRIDE_RMSK			= 0x301,
 	M_PRIOLVL_OVERRIDE_BMSK			= 0x300,
@@ -495,10 +495,10 @@ enum bimc_m_priolvl_override {
 };
 
 #define M_RD_CMD_OVERRIDE_ADDR(b, n) \
-	(M_REG_BASE(b) + (0x4000 * (n)) + 0x00000230)
+	(M_REG_BASE(b) + (0x4000 * (n)) + 0x00000240)
 enum bimc_m_read_command_override {
-	M_RD_CMD_OVERRIDE_RMSK			= 0x37f3f,
-	M_RD_CMD_OVERRIDE_AREQPRIO_BMSK		= 0x300000,
+	M_RD_CMD_OVERRIDE_RMSK			= 0x3071f7f,
+	M_RD_CMD_OVERRIDE_AREQPRIO_BMSK		= 0x3000000,
 	M_RD_CMD_OVERRIDE_AREQPRIO_SHFT		= 0x18,
 	M_RD_CMD_OVERRIDE_AMEMTYPE_BMSK		= 0x70000,
 	M_RD_CMD_OVERRIDE_AMEMTYPE_SHFT		= 0x10,
@@ -529,13 +529,15 @@ enum bimc_m_read_command_override {
 };
 
 #define M_WR_CMD_OVERRIDE_ADDR(b, n) \
-	(M_REG_BASE(b) + (0x4000 * (n)) + 0x00000240)
+	(M_REG_BASE(b) + (0x4000 * (n)) + 0x00000250)
 enum bimc_m_write_command_override {
-	M_WR_CMD_OVERRIDE_RMSK			= 0x37f3f,
-	M_WR_CMD_OVERRIDE_AREQPRIO_BMSK		= 0x30000,
-	M_WR_CMD_OVERRIDE_AREQPRIO_SHFT		= 0x10,
-	M_WR_CMD_OVERRIDE_AMEMTYPE_BMSK		= 0x7000,
-	M_WR_CMD_OVERRIDE_AMEMTYPE_SHFT		= 0xc,
+	M_WR_CMD_OVERRIDE_RMSK			= 0x3071f7f,
+	M_WR_CMD_OVERRIDE_AREQPRIO_BMSK		= 0x3000000,
+	M_WR_CMD_OVERRIDE_AREQPRIO_SHFT		= 0x18,
+	M_WR_CMD_OVERRIDE_AMEMTYPE_BMSK		= 0x70000,
+	M_WR_CMD_OVERRIDE_AMEMTYPE_SHFT		= 0x10,
+	M_WR_CMD_OVERRIDE_ATRANSIENT_BMSK	= 0x1000,
+	M_WR_CMD_OVERRIDE_ATRANSIENT_SHFT	= 0xc,
 	M_WR_CMD_OVERRIDE_ASHARED_BMSK		= 0x800,
 	M_WR_CMD_OVERRIDE_ASHARED_SHFT		= 0xb,
 	M_WR_CMD_OVERRIDE_AREDIRECT_BMSK		= 0x400,
@@ -544,8 +546,10 @@ enum bimc_m_write_command_override {
 	M_WR_CMD_OVERRIDE_AOOO_SHFT			= 0x9,
 	M_WR_CMD_OVERRIDE_AINNERSHARED_BMSK		= 0x100,
 	M_WR_CMD_OVERRIDE_AINNERSHARED_SHFT		= 0x8,
-	M_WR_CMD_OVERRIDE_OVERRIDE_AREQPRIO_BMSK	= 0x20,
-	M_WR_CMD_OVERRIDE_OVERRIDE_AREQPRIO_SHFT	= 0x5,
+	M_WR_CMD_OVERRIDE_OVERRIDE_AREQPRIO_BMSK	= 0x40,
+	M_WR_CMD_OVERRIDE_OVERRIDE_AREQPRIO_SHFT	= 0x6,
+	M_WR_CMD_OVERRIDE_OVERRIDE_ATRANSIENT_BMSK	= 0x20,
+	M_WR_CMD_OVERRIDE_OVERRIDE_ATRANSIENT_SHFT	= 0x5,
 	M_WR_CMD_OVERRIDE_OVERRIDE_AMEMTYPE_BMSK	= 0x10,
 	M_WR_CMD_OVERRIDE_OVERRIDE_AMEMTYPE_SHFT	= 0x4,
 	M_WR_CMD_OVERRIDE_OVERRIDE_ASHARED_BMSK	= 0x8,
@@ -1454,7 +1458,7 @@ static void msm_bus_bimc_set_qos_mode(struct msm_bus_bimc_info *binfo,
 		 * boundary in future
 		 */
 		wmb();
-		set_qos_mode(binfo->base, mas_index, 1, 1, 1);
+		set_qos_mode(binfo->base, mas_index, 0, 1, 1);
 		break;
 
 	case BIMC_QOS_MODE_BYPASS:
@@ -1803,7 +1807,7 @@ static void msm_bus_bimc_update_bw(struct msm_bus_inode_info *hop,
 	struct msm_bus_inode_info *info,
 	struct msm_bus_fabric_registration *fab_pdata,
 	void *sel_cdata, int *master_tiers,
-	long int add_bw)
+	int64_t add_bw)
 {
 	struct msm_bus_bimc_info *binfo;
 	struct msm_bus_bimc_qos_bw qbw;
@@ -1813,48 +1817,49 @@ static void msm_bus_bimc_update_bw(struct msm_bus_inode_info *hop,
 	struct msm_bus_bimc_commit *sel_cd =
 		(struct msm_bus_bimc_commit *)sel_cdata;
 
-	MSM_BUS_DBG("BIMC: Update bw for ID %d, with IID: %d: %ld\n",
+	MSM_BUS_DBG("BIMC: Update bw for ID %d, with IID: %d: %lld\n",
 		info->node_info->id, info->node_info->priv_id, add_bw);
 
 	binfo = (struct msm_bus_bimc_info *)fab_pdata->hw_data;
-	if (!info->node_info->qport) {
-		MSM_BUS_DBG("No qos ports to update!\n");
-		return;
-	}
 
 	if (info->node_info->num_mports == 0) {
 		MSM_BUS_DBG("BIMC: Skip Master BW\n");
 		goto skip_mas_bw;
 	}
 
+	ports = info->node_info->num_mports;
 	bw = INTERLEAVED_BW(fab_pdata, add_bw, ports);
-	ports = INTERLEAVED_VAL(fab_pdata, ports);
 
 	for (i = 0; i < ports; i++) {
-		MSM_BUS_DBG("qport: %d\n", info->node_info->qport[i]);
 		sel_cd->mas[info->node_info->masterp[i]].bw += bw;
 		sel_cd->mas[info->node_info->masterp[i]].hw_id =
 			info->node_info->mas_hw_id;
-		qbw.bw = sel_cd->mas[info->node_info->masterp[i]].bw;
-		qbw.ws = info->node_info->ws;
-		/* Threshold low = 90% of bw */
-		qbw.thl = (90 * bw) / 100;
-		/* Threshold medium = bw */
-		qbw.thm = bw;
-		/* Threshold high = 10% more than bw */
-		qbw.thh = (110 * bw) / 100;
-		/* Check if info is a shared master.
-		 * If it is, mark it dirty
-		 * If it isn't, then set QOS Bandwidth
-		 **/
-		MSM_BUS_DBG("BIMC: Update mas_bw for ID: %d -> %ld\n",
+		MSM_BUS_DBG("BIMC: Update mas_bw for ID: %d -> %llu\n",
 			info->node_info->priv_id,
 			sel_cd->mas[info->node_info->masterp[i]].bw);
 		if (info->node_info->hw_sel == MSM_BUS_RPM)
 			sel_cd->mas[info->node_info->masterp[i]].dirty = 1;
-		else
+		else {
+			if (!info->node_info->qport) {
+				MSM_BUS_DBG("No qos ports to update!\n");
+				break;
+			}
+			MSM_BUS_DBG("qport: %d\n", info->node_info->qport[i]);
+			qbw.bw = sel_cd->mas[info->node_info->masterp[i]].bw;
+			qbw.ws = info->node_info->ws;
+			/* Threshold low = 90% of bw */
+			qbw.thl = (90 * bw) / 100;
+			/* Threshold medium = bw */
+			qbw.thm = bw;
+			/* Threshold high = 10% more than bw */
+			qbw.thh = (110 * bw) / 100;
+			/* Check if info is a shared master.
+			 * If it is, mark it dirty
+			 * If it isn't, then set QOS Bandwidth
+			 **/
 			msm_bus_bimc_set_qos_bw(binfo,
 				info->node_info->qport[i], &qbw);
+		}
 	}
 
 skip_mas_bw:
@@ -1870,7 +1875,7 @@ skip_mas_bw:
 		sel_cd->slv[hop->node_info->slavep[i]].bw += bw;
 		sel_cd->slv[hop->node_info->slavep[i]].hw_id =
 			hop->node_info->slv_hw_id;
-		MSM_BUS_DBG("BIMC: Update slave_bw: ID: %d -> %ld\n",
+		MSM_BUS_DBG("BIMC: Update slave_bw: ID: %d -> %llu\n",
 			hop->node_info->priv_id,
 			sel_cd->slv[hop->node_info->slavep[i]].bw);
 		MSM_BUS_DBG("BIMC: Update slave_bw: index: %d\n",
@@ -1893,6 +1898,7 @@ static int msm_bus_bimc_commit(struct msm_bus_fabric_registration
 	*fab_pdata, void *hw_data, void **cdata)
 {
 	MSM_BUS_DBG("\nReached BIMC Commit\n");
+	msm_bus_remote_hw_commit(fab_pdata, hw_data, cdata);
 	return 0;
 }
 

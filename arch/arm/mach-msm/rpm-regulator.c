@@ -14,14 +14,17 @@
 #define pr_fmt(fmt) "%s: " fmt, __func__
 
 #include <linux/module.h>
+#include <linux/clk.h>
 #include <linux/err.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/slab.h>
-#include <linux/spinlock.h>
 #include <linux/string.h>
 #include <linux/platform_device.h>
+#include <linux/wakelock.h>
+#include <linux/workqueue.h>
 #include <linux/regulator/driver.h>
+
 #include <mach/rpm.h>
 #include <mach/rpm-regulator.h>
 #include <mach/rpm-regulator-smd.h>
@@ -58,6 +61,8 @@ struct vreg_config *(*get_config[])(void) = {
 	[RPM_VREG_VERSION_8960] = get_config_8960,
 	[RPM_VREG_VERSION_9615] = get_config_9615,
 	[RPM_VREG_VERSION_8930] = get_config_8930,
+	[RPM_VREG_VERSION_8930_PM8917] = get_config_8930_pm8917,
+	[RPM_VREG_VERSION_8960_PM8917] = get_config_8960_pm8917,
 };
 
 static struct rpm_regulator_consumer_mapping *consumer_map;
@@ -72,6 +77,11 @@ static int consumer_map_len;
 
 #define GET_PART(_vreg, _part) \
 	((_vreg->req[_vreg->part->_part.word].value & _vreg->part->_part.mask) \
+		>> _vreg->part->_part.shift)
+
+#define GET_PART_PREV_ACT(_vreg, _part) \
+	((_vreg->prev_active_req[_vreg->part->_part.word].value \
+	  & _vreg->part->_part.mask) \
 		>> _vreg->part->_part.shift)
 
 #define USES_PART(_vreg, _part) (_vreg->part->_part.mask)
@@ -287,8 +297,77 @@ static void rpm_regulator_duplicate(struct vreg *vreg, int set, int cnt)
 			vreg->req[0].id, vreg->req[0].value);
 }
 
-/* Spin lock needed for sleep-selectable regulators. */
-static DEFINE_SPINLOCK(rpm_noirq_lock);
+static bool requires_tcxo_workaround;
+static struct clk *tcxo_handle;
+static struct wake_lock tcxo_wake_lock;
+static DEFINE_MUTEX(tcxo_mutex);
+static bool tcxo_is_enabled;
+/*
+ * TCXO must be kept on for at least the duration of its warmup (4 ms);
+ * otherwise, it will stay on when hardware disabling is attempted.
+ */
+#define TCXO_WARMUP_TIME_MS 4
+
+static void tcxo_get_handle(void)
+{
+	if (!tcxo_handle) {
+		tcxo_handle = clk_get_sys("rpm-regulator", "vref_buff");
+		if (IS_ERR(tcxo_handle))
+			tcxo_handle = NULL;
+	}
+}
+
+/*
+ * Perform best effort enable of CXO.  Since the MSM clock drivers depend upon
+ * the rpm-regulator driver, any rpm-regulator devices that are configured with
+ * always_on == 1 will not be able to enable CXO during probe.  This does not
+ * cause a problem though since CXO will be enabled by the boot loaders before
+ * Apps boots up.
+ */
+static bool tcxo_enable(void)
+{
+	int rc;
+
+	if (tcxo_handle && !tcxo_is_enabled) {
+		rc = clk_prepare_enable(tcxo_handle);
+		if (!rc) {
+			tcxo_is_enabled = true;
+			wake_lock(&tcxo_wake_lock);
+			return true;
+		}
+	}
+
+	return false;
+}
+
+static void tcxo_delayed_disable_work(struct work_struct *work)
+{
+	mutex_lock(&tcxo_mutex);
+
+	clk_disable_unprepare(tcxo_handle);
+	tcxo_is_enabled = false;
+	wake_unlock(&tcxo_wake_lock);
+
+	mutex_unlock(&tcxo_mutex);
+}
+
+static DECLARE_DELAYED_WORK(tcxo_disable_work, tcxo_delayed_disable_work);
+
+static void tcxo_delayed_disable(void)
+{
+	/*
+	 * The delay in jiffies has 1 added to it to ensure that at least
+	 * one jiffy takes place before the work is enqueued.  Without this,
+	 * the work would be scheduled to run in the very next jiffy which could
+	 * result in too little delay and TCXO being stuck on.
+	 */
+	if (tcxo_handle)
+		schedule_delayed_work(&tcxo_disable_work,
+				msecs_to_jiffies(TCXO_WARMUP_TIME_MS) + 1);
+}
+
+/* Mutex lock needed for sleep-selectable regulators. */
+static DEFINE_MUTEX(rpm_sleep_sel_lock);
 
 static int voltage_from_req(struct vreg *vreg)
 {
@@ -321,6 +400,8 @@ static int vreg_send_request(struct vreg *vreg, enum rpm_vreg_voter voter,
 {
 	struct msm_rpm_iv_pair *prev_req;
 	int rc = 0, max_uV_vote = 0;
+	bool tcxo_enabled = false;
+	bool voltage_increased = false;
 	unsigned prev0, prev1;
 	int *min_uV_vote;
 	int i;
@@ -362,12 +443,24 @@ static int vreg_send_request(struct vreg *vreg, enum rpm_vreg_voter voter,
 	/* Ignore duplicate requests */
 	if (vreg->req[0].value != prev_req[0].value ||
 	    vreg->req[1].value != prev_req[1].value) {
-		rc = msm_rpmrs_set_noirq(set, vreg->req, cnt);
+
+		/* Enable CXO clock if necessary for TCXO workaround. */
+		if (requires_tcxo_workaround && vreg->requires_cxo
+		    && (set == MSM_RPM_CTX_SET_0)
+		    && (GET_PART(vreg, uV) > GET_PART_PREV_ACT(vreg, uV))) {
+			mutex_lock(&tcxo_mutex);
+			if (!tcxo_handle)
+				tcxo_get_handle();
+			voltage_increased = true;
+			tcxo_enabled = tcxo_enable();
+		}
+
+		rc = msm_rpmrs_set(set, vreg->req, cnt);
 		if (rc) {
 			vreg->req[0].value = prev0;
 			vreg->req[1].value = prev1;
 
-			vreg_err(vreg, "msm_rpmrs_set_noirq failed - "
+			vreg_err(vreg, "msm_rpmrs_set failed - "
 				"set=%s, id=%d, rc=%d\n",
 				(set == MSM_RPM_CTX_SET_0 ? "active" : "sleep"),
 				vreg->req[0].id, rc);
@@ -381,6 +474,16 @@ static int vreg_send_request(struct vreg *vreg, enum rpm_vreg_voter voter,
 			prev_req[0].value = vreg->req[0].value;
 			prev_req[1].value = vreg->req[1].value;
 		}
+
+		/*
+		 * Schedule CXO clock to be disabled after TCXO warmup time if
+		 * TCXO workaround is applicable for this regulator.
+		 */
+		if (voltage_increased) {
+			if (tcxo_enabled)
+				tcxo_delayed_disable();
+			mutex_unlock(&tcxo_mutex);
+		}
 	} else if (msm_rpm_vreg_debug_mask & MSM_RPM_VREG_DEBUG_DUPLICATE) {
 		rpm_regulator_duplicate(vreg, set, cnt);
 	}
@@ -388,19 +491,18 @@ static int vreg_send_request(struct vreg *vreg, enum rpm_vreg_voter voter,
 	return rc;
 }
 
-static int vreg_set_noirq(struct vreg *vreg, enum rpm_vreg_voter voter,
+static int vreg_set_sleep_sel(struct vreg *vreg, enum rpm_vreg_voter voter,
 			  int sleep, unsigned mask0, unsigned val0,
 			  unsigned mask1, unsigned val1, unsigned cnt,
 			  int update_voltage)
 {
 	unsigned int s_mask[2] = {mask0, mask1}, s_val[2] = {val0, val1};
-	unsigned long flags;
 	int rc;
 
 	if (voter < 0 || voter >= RPM_VREG_VOTER_COUNT)
 		return -EINVAL;
 
-	spin_lock_irqsave(&rpm_noirq_lock, flags);
+	mutex_lock(&rpm_sleep_sel_lock);
 
 	/*
 	 * Send sleep set request first so that subsequent set_mode, etc calls
@@ -436,7 +538,7 @@ static int vreg_set_noirq(struct vreg *vreg, enum rpm_vreg_voter voter,
 	rc = vreg_send_request(vreg, voter, MSM_RPM_CTX_SET_0, mask0, val0,
 					mask1, val1, cnt, update_voltage);
 
-	spin_unlock_irqrestore(&rpm_noirq_lock, flags);
+	mutex_unlock(&rpm_sleep_sel_lock);
 
 	return rc;
 }
@@ -452,10 +554,8 @@ static int vreg_set_noirq(struct vreg *vreg, enum rpm_vreg_voter voter,
  * Returns 0 on success or errno.
  *
  * This function is used to vote for the voltage of a regulator without
- * using the regulator framework.  It is needed by consumers which hold spin
- * locks or have interrupts disabled because the regulator framework can sleep.
- * It is also needed by consumers which wish to only vote for active set
- * regulator voltage.
+ * using the regulator framework.  It is needed for consumers which wish to only
+ * vote for active set regulator voltage.
  *
  * If sleep_also == 0, then a sleep-set value of 0V will be voted for.
  *
@@ -570,10 +670,10 @@ int rpm_vreg_set_voltage(int vreg_id, enum rpm_vreg_voter voter, int min_uV,
 		    = vreg->part->enable_state.mask;
 	}
 
-	rc = vreg_set_noirq(vreg, voter, sleep_also, mask[0], val[0], mask[1],
-			    val[1], vreg->part->request_len, 1);
+	rc = vreg_set_sleep_sel(vreg, voter, sleep_also, mask[0], val[0],
+				mask[1], val[1], vreg->part->request_len, 1);
 	if (rc)
-		vreg_err(vreg, "vreg_set_noirq failed, rc=%d\n", rc);
+		vreg_err(vreg, "vreg_set_sleep_sel failed, rc=%d\n", rc);
 
 	return rc;
 }
@@ -620,10 +720,10 @@ int rpm_vreg_set_frequency(int vreg_id, enum rpm_vreg_freq freq)
 	val[vreg->part->freq.word] = freq << vreg->part->freq.shift;
 	mask[vreg->part->freq.word] = vreg->part->freq.mask;
 
-	rc = vreg_set_noirq(vreg, RPM_VREG_VOTER_REG_FRAMEWORK, 1, mask[0],
+	rc = vreg_set_sleep_sel(vreg, RPM_VREG_VOTER_REG_FRAMEWORK, 1, mask[0],
 			   val[0], mask[1], val[1], vreg->part->request_len, 0);
 	if (rc)
-		vreg_err(vreg, "vreg_set failed, rc=%d\n", rc);
+		vreg_err(vreg, "vreg_set_sleep_sel failed, rc=%d\n", rc);
 
 	return rc;
 }
@@ -895,10 +995,8 @@ static inline unsigned saturate_avg_load(struct vreg *vreg, unsigned load_uA)
 static int vreg_store(struct vreg *vreg, unsigned mask0, unsigned val0,
 		unsigned mask1, unsigned val1)
 {
-	unsigned long flags = 0;
-
 	if (vreg->pdata.sleep_selectable)
-		spin_lock_irqsave(&rpm_noirq_lock, flags);
+		mutex_lock(&rpm_sleep_sel_lock);
 
 	vreg->req[0].value &= ~mask0;
 	vreg->req[0].value |= val0 & mask0;
@@ -907,7 +1005,7 @@ static int vreg_store(struct vreg *vreg, unsigned mask0, unsigned val0,
 	vreg->req[1].value |= val1 & mask1;
 
 	if (vreg->pdata.sleep_selectable)
-		spin_unlock_irqrestore(&rpm_noirq_lock, flags);
+		mutex_unlock(&rpm_sleep_sel_lock);
 
 	return 0;
 }
@@ -916,6 +1014,8 @@ static int vreg_set(struct vreg *vreg, unsigned mask0, unsigned val0,
 		unsigned mask1, unsigned val1, unsigned cnt)
 {
 	unsigned prev0 = 0, prev1 = 0;
+	bool tcxo_enabled = false;
+	bool voltage_increased = false;
 	int rc;
 
 	/*
@@ -923,7 +1023,7 @@ static int vreg_set(struct vreg *vreg, unsigned mask0, unsigned val0,
 	 * just the active set values.
 	 */
 	if (vreg->pdata.sleep_selectable)
-		return vreg_set_noirq(vreg, RPM_VREG_VOTER_REG_FRAMEWORK, 1,
+		return vreg_set_sleep_sel(vreg, RPM_VREG_VOTER_REG_FRAMEWORK, 1,
 					mask0, val0, mask1, val1, cnt, 1);
 
 	prev0 = vreg->req[0].value;
@@ -942,7 +1042,18 @@ static int vreg_set(struct vreg *vreg, unsigned mask0, unsigned val0,
 		return 0;
 	}
 
+	/* Enable CXO clock if necessary for TCXO workaround. */
+	if (requires_tcxo_workaround && vreg->requires_cxo
+	    && (GET_PART(vreg, uV) > GET_PART_PREV_ACT(vreg, uV))) {
+		mutex_lock(&tcxo_mutex);
+		if (!tcxo_handle)
+			tcxo_get_handle();
+		voltage_increased = true;
+		tcxo_enabled = tcxo_enable();
+	}
+
 	rc = msm_rpm_set(MSM_RPM_CTX_SET_0, vreg->req, cnt);
+
 	if (rc) {
 		vreg->req[0].value = prev0;
 		vreg->req[1].value = prev1;
@@ -954,6 +1065,16 @@ static int vreg_set(struct vreg *vreg, unsigned mask0, unsigned val0,
 			rpm_regulator_req(vreg, MSM_RPM_CTX_SET_0);
 		vreg->prev_active_req[0].value = vreg->req[0].value;
 		vreg->prev_active_req[1].value = vreg->req[1].value;
+	}
+
+	/*
+	 * Schedule CXO clock to be disabled after TCXO warmup time if TCXO
+	 * workaround is applicable for this regulator.
+	 */
+	if (voltage_increased) {
+		if (tcxo_enabled)
+			tcxo_delayed_disable();
+		mutex_unlock(&tcxo_mutex);
 	}
 
 	return rc;
@@ -1470,6 +1591,20 @@ struct regulator_ops *vreg_ops[] = {
 	[RPM_REGULATOR_TYPE_CORNER]	= &corner_ops,
 };
 
+static struct vreg *rpm_vreg_get_vreg(int id)
+{
+	struct vreg *vreg;
+
+	if (id < config->vreg_id_min || id > config->vreg_id_max)
+		return NULL;
+
+	if (!config->is_real_id(id))
+		id = config->pc_id_to_real_id(id);
+	vreg = &config->vregs[id];
+
+	return vreg;
+}
+
 static int __devinit
 rpm_vreg_init_regulator(const struct rpm_regulator_init_data *pdata,
 			struct device *dev)
@@ -1478,7 +1613,7 @@ rpm_vreg_init_regulator(const struct rpm_regulator_init_data *pdata,
 	struct regulator_dev *rdev;
 	struct vreg *vreg;
 	unsigned pin_ctrl;
-	int id, pin_fn;
+	int pin_fn;
 	int rc = 0;
 
 	if (!pdata) {
@@ -1486,16 +1621,11 @@ rpm_vreg_init_regulator(const struct rpm_regulator_init_data *pdata,
 		return -EINVAL;
 	}
 
-	id = pdata->id;
-
-	if (id < config->vreg_id_min || id > config->vreg_id_max) {
-		pr_err("invalid regulator id: %d\n", id);
+	vreg = rpm_vreg_get_vreg(pdata->id);
+	if (!vreg) {
+		pr_err("invalid regulator id: %d\n", pdata->id);
 		return -ENODEV;
 	}
-
-	if (!config->is_real_id(pdata->id))
-		id = config->pc_id_to_real_id(pdata->id);
-	vreg = &config->vregs[id];
 
 	if (config->is_real_id(pdata->id))
 		rdesc = &vreg->rdesc;
@@ -1705,6 +1835,13 @@ static int __devinit rpm_vreg_probe(struct platform_device *pdev)
 
 	}
 
+	if (platform_data->requires_tcxo_workaround
+	    && !requires_tcxo_workaround) {
+		requires_tcxo_workaround = true;
+		wake_lock_init(&tcxo_wake_lock, WAKE_LOCK_SUSPEND,
+				"rpm_regulator_tcxo");
+	}
+
 	/* Initialize all of the regulators listed in the platform data. */
 	for (i = 0; i < platform_data->num_regulators; i++) {
 		rc = rpm_vreg_init_regulator(&platform_data->init_data[i],
@@ -1785,6 +1922,9 @@ static void __exit rpm_vreg_exit(void)
 
 	for (i = 0; i < config->vregs_len; i++)
 		mutex_destroy(&config->vregs[i].pc_lock);
+
+	if (tcxo_handle)
+		clk_put(tcxo_handle);
 }
 
 postcore_initcall(rpm_vreg_init);

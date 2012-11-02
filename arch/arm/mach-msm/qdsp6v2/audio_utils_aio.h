@@ -24,7 +24,7 @@
 #include <linux/debugfs.h>
 #include <linux/list.h>
 #include <linux/slab.h>
-#include <linux/ion.h>
+#include <linux/msm_ion.h>
 #include <asm/ioctls.h>
 #include <asm/atomic.h>
 #include "q6audio_common.h"
@@ -36,6 +36,7 @@
 #define ADRV_STATUS_FSYNC 0x00000008
 #define ADRV_STATUS_PAUSE 0x00000010
 #define AUDIO_DEC_EOS_SET  0x00000001
+#define AUDIO_DEC_EOF_SET  0x00000010
 #define AUDIO_EVENT_NUM		10
 
 #define __CONTAINS(r, v, l) ({                                  \
@@ -114,7 +115,6 @@ union  meta_data {
 struct audio_aio_ion_region {
 	struct list_head list;
 	struct ion_handle *handle;
-	struct ion_client *client;
 	int fd;
 	void *vaddr;
 	unsigned long paddr;
@@ -173,6 +173,7 @@ struct q6audio_aio {
 	struct list_head free_event_queue;
 	struct list_head event_queue;
 	struct list_head ion_region_queue;     /* protected by lock */
+	struct ion_client *client;
 	struct audio_aio_drv_operations drv_ops;
 	union msm_audio_event_payload eos_write_payload;
 
@@ -195,6 +196,12 @@ void audio_aio_async_write_ack(struct q6audio_aio *audio, uint32_t token,
 void audio_aio_async_read_ack(struct q6audio_aio *audio, uint32_t token,
 			uint32_t *payload);
 
+int insert_eos_buf(struct q6audio_aio *audio,
+		struct audio_aio_buffer_node *buf_node);
+
+void extract_meta_out_info(struct q6audio_aio *audio,
+		struct audio_aio_buffer_node *buf_node, int dir);
+
 int audio_aio_open(struct q6audio_aio *audio, struct file *file);
 int audio_aio_enable(struct q6audio_aio  *audio);
 void audio_aio_post_event(struct q6audio_aio *audio, int type,
@@ -206,6 +213,6 @@ void audio_aio_async_out_flush(struct q6audio_aio *audio);
 void audio_aio_async_in_flush(struct q6audio_aio *audio);
 #ifdef CONFIG_DEBUG_FS
 ssize_t audio_aio_debug_open(struct inode *inode, struct file *file);
-ssize_t audio_aio_debug_read(struct file *file, char __user * buf,
+ssize_t audio_aio_debug_read(struct file *file, char __user *buf,
 			size_t count, loff_t *ppos);
 #endif

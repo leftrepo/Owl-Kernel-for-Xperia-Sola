@@ -13,9 +13,10 @@
 
 #include <linux/init.h>
 #include <linux/platform_device.h>
-#include <linux/msm_kgsl.h>
+#include <mach/kgsl.h>
 #include <mach/msm_bus_board.h>
 #include <mach/board.h>
+#include <mach/socinfo.h>
 
 #include "devices.h"
 #include "board-8930.h"
@@ -35,7 +36,7 @@ static struct msm_bus_vectors grp3d_low_vectors[] = {
 		.src = MSM_BUS_MASTER_GRAPHICS_3D,
 		.dst = MSM_BUS_SLAVE_EBI_CH0,
 		.ab = 0,
-		.ib = KGSL_CONVERT_TO_MBPS(2000),
+		.ib = KGSL_CONVERT_TO_MBPS(1000),
 	},
 };
 
@@ -44,7 +45,7 @@ static struct msm_bus_vectors grp3d_nominal_vectors[] = {
 		.src = MSM_BUS_MASTER_GRAPHICS_3D,
 		.dst = MSM_BUS_SLAVE_EBI_CH0,
 		.ab = 0,
-		.ib = KGSL_CONVERT_TO_MBPS(3200),
+		.ib = KGSL_CONVERT_TO_MBPS(2656),
 	},
 };
 
@@ -115,7 +116,7 @@ static struct kgsl_device_iommu_data kgsl_3d0_iommu_data[] = {
 static struct kgsl_device_platform_data kgsl_3d0_pdata = {
 	.pwrlevel = {
 		{
-			.gpu_freq = 450000000,
+			.gpu_freq = 400000000,
 			.bus_freq = 3,
 			.io_fraction = 0,
 		},
@@ -134,11 +135,12 @@ static struct kgsl_device_platform_data kgsl_3d0_pdata = {
 			.bus_freq = 0,
 		},
 	},
-	.init_level = 0,
+	.init_level = 1,
 	.num_levels = 4,
 	.set_grp_async = NULL,
 	.idle_timeout = HZ/12,
 	.nap_allowed = true,
+	.strtstp_sleepwake = true,
 	.clk_map = KGSL_CLK_CORE | KGSL_CLK_IFACE | KGSL_CLK_MEM_IFACE,
 #ifdef CONFIG_MSM_BUS_SCALING
 	.bus_scale_table = &grp3d_bus_scale_pdata,
@@ -159,5 +161,24 @@ static struct platform_device device_kgsl_3d0 = {
 
 void __init msm8930_init_gpu(void)
 {
+	unsigned int version = socinfo_get_version();
+
+	/* Set the turbo speed for the AA and AB respectively */
+
+	if (cpu_is_msm8930aa())
+		kgsl_3d0_pdata.pwrlevel[0].gpu_freq = 450000000;
+	else if (cpu_is_msm8930ab())
+		kgsl_3d0_pdata.pwrlevel[0].gpu_freq = 500000000;
+
+	/* Set up the chip ID based on the SoC version */
+
+	if (cpu_is_msm8930ab())
+		kgsl_3d0_pdata.chipid = ADRENO_CHIPID(3, 0, 5, 3);
+	else if ((SOCINFO_VERSION_MAJOR(version) == 1) &&
+		(SOCINFO_VERSION_MINOR(version) == 2))
+		kgsl_3d0_pdata.chipid = ADRENO_CHIPID(3, 0, 5, 2);
+	else
+		kgsl_3d0_pdata.chipid = ADRENO_CHIPID(3, 0, 5, 0);
+
 	platform_device_register(&device_kgsl_3d0);
 }
