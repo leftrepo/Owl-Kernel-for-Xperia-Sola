@@ -725,6 +725,7 @@ const char * const vmstat_text[] = {
 #ifdef CONFIG_UKSM
 	"nr_uksm_zero_pages",
 #endif
+	"nr_free_cma",
 	"nr_dirty_threshold",
 	"nr_dirty_background_threshold",
 
