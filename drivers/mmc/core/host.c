@@ -4,7 +4,7 @@
  *  Copyright (C) 2003 Russell King, All Rights Reserved.
  *  Copyright (C) 2007-2008 Pierre Ossman
  *  Copyright (C) 2010 Linus Walleij
- *  Copyright (c) 2012, The Linux Foundation. All rights reserved.
+ *  Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -36,6 +36,81 @@ static void mmc_host_classdev_release(struct device *dev)
 	kfree(host->wlock_name);
 	kfree(host);
 }
+
+static int mmc_host_runtime_suspend(struct device *dev)
+{
+	struct mmc_host *host = cls_dev_to_mmc_host(dev);
+	int ret = 0;
+
+	if (!mmc_use_core_runtime_pm(host))
+		return 0;
+
+	ret = mmc_suspend_host(host);
+	if (ret < 0)
+		pr_err("%s: %s: suspend host failed: %d\n", mmc_hostname(host),
+		       __func__, ret);
+
+	return ret;
+}
+
+static int mmc_host_runtime_resume(struct device *dev)
+{
+	struct mmc_host *host = cls_dev_to_mmc_host(dev);
+	int ret = 0;
+
+	if (!mmc_use_core_runtime_pm(host))
+		return 0;
+
+	ret = mmc_resume_host(host);
+	if (ret < 0) {
+		pr_err("%s: %s: resume host: failed: ret: %d\n",
+		       mmc_hostname(host), __func__, ret);
+		if (pm_runtime_suspended(dev))
+			BUG_ON(1);
+	}
+
+	return ret;
+}
+
+static int mmc_host_suspend(struct device *dev)
+{
+	struct mmc_host *host = cls_dev_to_mmc_host(dev);
+	int ret = 0;
+
+	if (!mmc_use_core_runtime_pm(host))
+		return 0;
+
+	if (!pm_runtime_suspended(dev)) {
+		ret = mmc_suspend_host(host);
+		if (ret < 0)
+			pr_err("%s: %s: failed: ret: %d\n", mmc_hostname(host),
+			       __func__, ret);
+	}
+	return ret;
+}
+
+static int mmc_host_resume(struct device *dev)
+{
+	struct mmc_host *host = cls_dev_to_mmc_host(dev);
+	int ret = 0;
+
+	if (!mmc_use_core_runtime_pm(host))
+		return 0;
+
+	if (!pm_runtime_suspended(dev)) {
+		ret = mmc_resume_host(host);
+		if (ret < 0)
+			pr_err("%s: %s: failed: ret: %d\n", mmc_hostname(host),
+			       __func__, ret);
+	}
+	return ret;
+}
+
+static const struct dev_pm_ops mmc_host_pm_ops = {
+	SET_SYSTEM_SLEEP_PM_OPS(mmc_host_suspend, mmc_host_resume)
+	SET_RUNTIME_PM_OPS(mmc_host_runtime_suspend, mmc_host_runtime_resume,
+			   pm_generic_runtime_idle)
+};
 
 static struct class mmc_host_class = {
 	.name		= "mmc_host",
