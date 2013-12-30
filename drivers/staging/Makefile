@@ -81,3 +81,4 @@ obj-$(CONFIG_AB5500_SIM)	+= ab5500_sim/
 obj-$(CONFIG_SENSORS_TSL2772)	+= taos/
 obj-$(CONFIG_SNAPPY_COMPRESS)	+= snappy/
 obj-$(CONFIG_SNAPPY_DECOMPRESS)	+= snappy/
+obj-$(CONFIG_VNSWAP)		+= vnswap/
