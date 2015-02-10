@@ -1,0 +1,3 @@
+kernel/drivers/staging/cg2900/bluetooth/btcg2900.ko
+kernel/drivers/staging/cg2900/bluetooth/cg2900_uart.ko
+kernel/drivers/staging/cg2900/bluetooth/hci_ldisc.ko

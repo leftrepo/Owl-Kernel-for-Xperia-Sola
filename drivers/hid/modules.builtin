@@ -1,0 +1,5 @@
+kernel/drivers/hid/hid.ko
+kernel/drivers/hid/hid-logitech.ko
+kernel/drivers/hid/hid-pl.ko
+kernel/drivers/hid/hid-sony.ko
+kernel/drivers/hid/usbhid/usbhid.ko

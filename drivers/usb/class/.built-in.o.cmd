@@ -1,0 +1,1 @@
+cmd_drivers/usb/class/built-in.o :=  /home/administrator/x-tools/arm-cortex_a9-linux-gnueabihf/bin/arm-cortex_a9-linux-gnueabihf-ld -EL    -r -o drivers/usb/class/built-in.o drivers/usb/class/cdc-acm.o 

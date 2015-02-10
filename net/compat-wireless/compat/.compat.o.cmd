@@ -1,0 +1,1 @@
+cmd_net/compat-wireless/compat/compat.o := /home/administrator/x-tools/arm-cortex_a9-linux-gnueabihf/bin/arm-cortex_a9-linux-gnueabihf-ld -EL    -r -o net/compat-wireless/compat/compat.o net/compat-wireless/compat/main.o 

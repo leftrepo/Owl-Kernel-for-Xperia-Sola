@@ -1,0 +1,1 @@
+cmd_drivers/crypto/built-in.o :=  /home/administrator/x-tools/arm-cortex_a9-linux-gnueabihf/bin/arm-cortex_a9-linux-gnueabihf-ld -EL    -r -o drivers/crypto/built-in.o drivers/crypto/ux500/built-in.o 

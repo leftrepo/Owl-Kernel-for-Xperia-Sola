@@ -1,0 +1,10 @@
+--- kernel/sched_fair.c
++++ kernel/sched_fair.c
+@@ -1822,6 +1929,7 @@
+ 				     unsigned long delta_exec) {}
+ static void check_cfs_rq_runtime(struct cfs_rq *cfs_rq) {}
+ static void check_enqueue_throttle(struct cfs_rq *cfs_rq) {}
++static void return_cfs_rq_runtime(struct cfs_rq *cfs_rq) {}
+ 
+ static inline int cfs_rq_throttled(struct cfs_rq *cfs_rq)
+ {

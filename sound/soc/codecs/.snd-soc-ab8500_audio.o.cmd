@@ -1,0 +1,1 @@
+cmd_sound/soc/codecs/snd-soc-ab8500_audio.o := /home/administrator/x-tools/arm-cortex_a9-linux-gnueabihf/bin/arm-cortex_a9-linux-gnueabihf-ld -EL    -r -o sound/soc/codecs/snd-soc-ab8500_audio.o sound/soc/codecs/ab8500_audio.o 

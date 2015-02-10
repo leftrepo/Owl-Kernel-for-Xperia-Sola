@@ -1,0 +1,1 @@
+cmd_drivers/char/frandom.ko := /home/administrator/x-tools/arm-cortex_a9-linux-gnueabihf/bin/arm-cortex_a9-linux-gnueabihf-ld -EL -r  -T /home/administrator/kernel/kernel_3.0.8/scripts/module-common.lds --build-id  -o drivers/char/frandom.ko drivers/char/frandom.o drivers/char/frandom.mod.o

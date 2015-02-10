@@ -1,0 +1,1 @@
+cmd_drivers/usb/gadget/g_android.o := /home/administrator/x-tools/arm-cortex_a9-linux-gnueabihf/bin/arm-cortex_a9-linux-gnueabihf-ld -EL    -r -o drivers/usb/gadget/g_android.o drivers/usb/gadget/android.o 

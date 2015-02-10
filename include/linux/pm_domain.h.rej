@@ -1,0 +1,16 @@
+--- include/linux/pm_domain.h
++++ include/linux/pm_domain.h
+@@ -54,6 +53,13 @@
+ 	return container_of(pd, struct generic_pm_domain, domain);
+ }
+ 
++struct gpd_link {
++	struct generic_pm_domain *master;
++	struct list_head master_node;
++	struct generic_pm_domain *slave;
++	struct list_head slave_node;
++};
++
+ struct dev_list_entry {
+ 	struct list_head node;
+ 	struct device *dev;

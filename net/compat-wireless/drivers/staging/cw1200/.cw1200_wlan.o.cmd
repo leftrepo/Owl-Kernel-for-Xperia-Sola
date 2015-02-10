@@ -1,0 +1,1 @@
+cmd_net/compat-wireless/drivers/staging/cw1200/cw1200_wlan.o := /home/administrator/x-tools/arm-cortex_a9-linux-gnueabihf/bin/arm-cortex_a9-linux-gnueabihf-ld -EL    -r -o net/compat-wireless/drivers/staging/cw1200/cw1200_wlan.o net/compat-wireless/drivers/staging/cw1200/cw1200_sdio.o 

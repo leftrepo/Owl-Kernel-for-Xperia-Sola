@@ -1,0 +1,1 @@
+cmd_fs/nls/built-in.o :=  /home/administrator/x-tools/arm-cortex_a9-linux-gnueabihf/bin/arm-cortex_a9-linux-gnueabihf-ld -EL    -r -o fs/nls/built-in.o fs/nls/nls_base.o fs/nls/nls_cp437.o fs/nls/nls_cp1250.o fs/nls/nls_cp1251.o fs/nls/nls_iso8859-1.o fs/nls/nls_koi8-u.o fs/nls/nls_koi8-ru.o fs/nls/nls_utf8.o 

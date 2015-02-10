@@ -1,0 +1,13 @@
+kernel/drivers/input/input-core.ko
+kernel/drivers/input/joydev.ko
+kernel/drivers/input/evdev.ko
+kernel/drivers/input/joystick/xpad.ko
+kernel/drivers/input/keyboard/gpio_keys.ko
+kernel/drivers/input/keyboard/nomadik-ske-keypad.ko
+kernel/drivers/input/misc/ab8500-ponkey.ko
+kernel/drivers/input/misc/uinput.ko
+kernel/drivers/input/misc/lsm303dlh_mag.ko
+kernel/drivers/input/misc/lsm303dlhc_acc_lt.ko
+kernel/drivers/input/misc/apds9702.ko
+kernel/drivers/input/touchscreen/cyttsp_core.ko
+kernel/drivers/input/touchscreen/cyttsp_spi.ko

@@ -1,0 +1,1 @@
+cmd_drivers/watchdog/built-in.o :=  /home/administrator/x-tools/arm-cortex_a9-linux-gnueabihf/bin/arm-cortex_a9-linux-gnueabihf-ld -EL    -r -o drivers/watchdog/built-in.o drivers/watchdog/ux500_wdt.o 

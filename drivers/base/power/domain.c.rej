@@ -1,0 +1,23 @@
+--- drivers/base/power/domain.c
++++ drivers/base/power/domain.c
+@@ -286,7 +286,7 @@
+ static int pm_genpd_poweroff(struct generic_pm_domain *genpd)
+ 	__releases(&genpd->lock) __acquires(&genpd->lock)
+ {
+-	struct dev_list_entry *dle;
++	struct pm_domain_data *pdd;
+ 	struct gpd_link *link;
+ 	unsigned int not_suspended;
+ 	int ret = 0;
+@@ -332,9 +332,9 @@
+ 	genpd->status = GPD_STATE_BUSY;
+ 	genpd->poweroff_task = current;
+ 
+-	list_for_each_entry_reverse(dle, &genpd->dev_list, node) {
++	list_for_each_entry_reverse(pdd, &genpd->dev_list, list_node) {
+ 		ret = atomic_read(&genpd->sd_count) == 0 ?
+-			__pm_genpd_save_device(dle, genpd) : -EBUSY;
++			__pm_genpd_save_device(pdd, genpd) : -EBUSY;
+ 
+ 		if (genpd_abort_poweroff(genpd))
+ 			goto out;

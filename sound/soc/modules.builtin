@@ -1,0 +1,3 @@
+kernel/sound/soc/snd-soc-core.ko
+kernel/sound/soc/codecs/snd-soc-ab8500_audio.ko
+kernel/sound/soc/codecs/snd-soc-cg29xx.ko

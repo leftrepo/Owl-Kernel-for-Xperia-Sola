@@ -1,0 +1,1 @@
+cmd_drivers/staging/zram/zram.o := /home/administrator/x-tools/arm-cortex_a9-linux-gnueabihf/bin/arm-cortex_a9-linux-gnueabihf-ld -EL    -r -o drivers/staging/zram/zram.o drivers/staging/zram/zram_drv.o drivers/staging/zram/zram_sysfs.o 

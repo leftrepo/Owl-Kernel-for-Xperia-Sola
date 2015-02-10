@@ -1,0 +1,1 @@
+cmd_drivers/gpio/built-in.o :=  /home/administrator/x-tools/arm-cortex_a9-linux-gnueabihf/bin/arm-cortex_a9-linux-gnueabihf-ld -EL    -r -o drivers/gpio/built-in.o drivers/gpio/gpiolib.o drivers/gpio/gpio-ab8500.o drivers/gpio/gpio-nomadik.o 

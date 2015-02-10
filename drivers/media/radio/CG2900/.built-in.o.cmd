@@ -1,0 +1,1 @@
+cmd_drivers/media/radio/CG2900/built-in.o :=  /home/administrator/x-tools/arm-cortex_a9-linux-gnueabihf/bin/arm-cortex_a9-linux-gnueabihf-ld -EL    -r -o drivers/media/radio/CG2900/built-in.o drivers/media/radio/CG2900/radio_cg2900.o 

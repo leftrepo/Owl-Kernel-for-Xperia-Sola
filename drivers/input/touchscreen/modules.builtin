@@ -1,0 +1,2 @@
+kernel/drivers/input/touchscreen/cyttsp_core.ko
+kernel/drivers/input/touchscreen/cyttsp_spi.ko

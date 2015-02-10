@@ -1,0 +1,1 @@
+cmd_drivers/i2c/muxes/built-in.o :=  rm -f drivers/i2c/muxes/built-in.o; /home/administrator/x-tools/arm-cortex_a9-linux-gnueabihf/bin/arm-cortex_a9-linux-gnueabihf-ar rcsD drivers/i2c/muxes/built-in.o

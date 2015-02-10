@@ -1,0 +1,19 @@
+--- include/linux/slub_def.h
++++ include/linux/slub_def.h
+@@ -30,6 +30,7 @@
+ 	DEACTIVATE_TO_TAIL,	/* Cpu slab was moved to the tail of partials */
+ 	DEACTIVATE_REMOTE_FREES,/* Slab contained remotely freed objects */
+ 	ORDER_FALLBACK,		/* Number of times fallback was necessary */
++	DEFERRED_PARTIAL,	/* Defer local partial list for lack of objs */
+ 	NR_SLUB_STAT_ITEMS };
+ 
+ struct kmem_cache_cpu {
+@@ -38,6 +39,8 @@
+ 	int node;		/* The node of the page (or -1 for debug) */
+ 	unsigned int offset;	/* Freepointer offset (in word units) */
+ 	unsigned int objsize;	/* Size of an object (from kmem_cache) */
++	u16 fastpath_allocs;	/* Consecutive fast allocs before slowpath */
++	u16 slowpath_allocs;	/* Consecutive slow allocs before watermark */
+ #ifdef CONFIG_SLUB_STATS
+ 	unsigned stat[NR_SLUB_STAT_ITEMS];
+ #endif

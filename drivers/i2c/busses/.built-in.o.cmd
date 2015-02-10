@@ -1,0 +1,1 @@
+cmd_drivers/i2c/busses/built-in.o :=  /home/administrator/x-tools/arm-cortex_a9-linux-gnueabihf/bin/arm-cortex_a9-linux-gnueabihf-ld -EL    -r -o drivers/i2c/busses/built-in.o drivers/i2c/busses/i2c-nomadik.o 

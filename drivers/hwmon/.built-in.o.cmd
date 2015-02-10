@@ -1,0 +1,1 @@
+cmd_drivers/hwmon/built-in.o :=  /home/administrator/x-tools/arm-cortex_a9-linux-gnueabihf/bin/arm-cortex_a9-linux-gnueabihf-ld -EL    -r -o drivers/hwmon/built-in.o drivers/hwmon/hwmon.o drivers/hwmon/abx500.o drivers/hwmon/ab8500.o drivers/hwmon/dbx500.o 

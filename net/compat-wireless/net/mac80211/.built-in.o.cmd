@@ -1,0 +1,1 @@
+cmd_net/compat-wireless/net/mac80211/built-in.o :=  /home/administrator/x-tools/arm-cortex_a9-linux-gnueabihf/bin/arm-cortex_a9-linux-gnueabihf-ld -EL    -r -o net/compat-wireless/net/mac80211/built-in.o net/compat-wireless/net/mac80211/mac80211.o 

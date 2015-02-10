@@ -1,0 +1,1 @@
+cmd_drivers/modem/built-in.o :=  /home/administrator/x-tools/arm-cortex_a9-linux-gnueabihf/bin/arm-cortex_a9-linux-gnueabihf-ld -EL    -r -o drivers/modem/built-in.o drivers/modem/modem_access.o drivers/modem/modem_u8500.o drivers/modem/shrm/built-in.o 

@@ -1,0 +1,1 @@
+cmd_drivers/mmc/core/built-in.o :=  /home/administrator/x-tools/arm-cortex_a9-linux-gnueabihf/bin/arm-cortex_a9-linux-gnueabihf-ld -EL    -r -o drivers/mmc/core/built-in.o drivers/mmc/core/mmc_core.o drivers/mmc/core/sd_check_mbr.o 

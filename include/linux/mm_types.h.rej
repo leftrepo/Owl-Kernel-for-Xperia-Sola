@@ -1,0 +1,12 @@
+--- include/linux/mm_types.h
++++ include/linux/mm_types.h
+@@ -330,9 +325,6 @@
+ #ifdef CONFIG_CPUMASK_OFFSTACK
+ 	struct cpumask cpumask_allocation;
+ #endif
+-#ifdef CONFIG_PREEMPT_RT_BASE
+-	struct rcu_head delayed_drop;
+-#endif
+ };
+ 
+ static inline void mm_init_cpumask(struct mm_struct *mm)

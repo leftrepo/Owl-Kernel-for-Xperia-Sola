@@ -1,0 +1,7 @@
+kernel/drivers/staging/cg2900/mfd/cg2900_core.ko
+kernel/drivers/staging/cg2900/mfd/cg2900_lib.ko
+kernel/drivers/staging/cg2900/mfd/cg2900_char_devices.ko
+kernel/drivers/staging/cg2900/mfd/cg2900_test.ko
+kernel/drivers/staging/cg2900/mfd/cg2900_chip.ko
+kernel/drivers/staging/cg2900/mfd/stlc2690_chip.ko
+kernel/drivers/staging/cg2900/mfd/cg2900_audio.ko
