@@ -1,1 +1,0 @@
-cmd_drivers/staging/zcache/built-in.o :=  /home/administrator/x-tools/arm-cortex_a9-linux-gnueabihf/bin/arm-cortex_a9-linux-gnueabihf-ld -EL    -r -o drivers/staging/zcache/built-in.o drivers/staging/zcache/zcache-main.o drivers/staging/zcache/tmem.o 

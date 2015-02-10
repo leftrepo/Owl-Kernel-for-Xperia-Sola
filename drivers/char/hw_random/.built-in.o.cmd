@@ -1,1 +1,0 @@
-cmd_drivers/char/hw_random/built-in.o :=  /home/administrator/x-tools/arm-cortex_a9-linux-gnueabihf/bin/arm-cortex_a9-linux-gnueabihf-ld -EL    -r -o drivers/char/hw_random/built-in.o drivers/char/hw_random/rng-core.o drivers/char/hw_random/timeriomem-rng.o drivers/char/hw_random/nomadik-rng.o 

@@ -1,8 +1,0 @@
-kernel/fs/nls/nls_base.ko
-kernel/fs/nls/nls_cp437.ko
-kernel/fs/nls/nls_cp1250.ko
-kernel/fs/nls/nls_cp1251.ko
-kernel/fs/nls/nls_iso8859-1.ko
-kernel/fs/nls/nls_koi8-u.ko
-kernel/fs/nls/nls_koi8-ru.ko
-kernel/fs/nls/nls_utf8.ko

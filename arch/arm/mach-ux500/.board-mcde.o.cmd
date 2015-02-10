@@ -1,1 +1,0 @@
-cmd_arch/arm/mach-ux500/board-mcde.o := /home/administrator/x-tools/arm-cortex_a9-linux-gnueabihf/bin/arm-cortex_a9-linux-gnueabihf-ld -EL    -r -o arch/arm/mach-ux500/board-mcde.o arch/arm/mach-ux500/board-rio-grande-mcde.o 

@@ -1,1 +1,0 @@
-cmd_drivers/clocksource/built-in.o :=  /home/administrator/x-tools/arm-cortex_a9-linux-gnueabihf/bin/arm-cortex_a9-linux-gnueabihf-ld -EL    -r -o drivers/clocksource/built-in.o drivers/clocksource/mmio.o drivers/clocksource/clksrc-dbx500-prcmu.o 

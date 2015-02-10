@@ -1,1 +1,0 @@
-cmd_drivers/usb/storage/usb-libusual.o := /home/administrator/x-tools/arm-cortex_a9-linux-gnueabihf/bin/arm-cortex_a9-linux-gnueabihf-ld -EL    -r -o drivers/usb/storage/usb-libusual.o drivers/usb/storage/libusual.o drivers/usb/storage/usual-tables.o 

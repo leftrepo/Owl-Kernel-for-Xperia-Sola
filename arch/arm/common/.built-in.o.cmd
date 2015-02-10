@@ -1,1 +1,0 @@
-cmd_arch/arm/common/built-in.o :=  /home/administrator/x-tools/arm-cortex_a9-linux-gnueabihf/bin/arm-cortex_a9-linux-gnueabihf-ld -EL    -r -o arch/arm/common/built-in.o arch/arm/common/gic.o arch/arm/common/boottime.o 

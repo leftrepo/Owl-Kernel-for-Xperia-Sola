@@ -1,1 +1,0 @@
-cmd_kernel/events/built-in.o :=  /home/administrator/x-tools/arm-cortex_a9-linux-gnueabihf/bin/arm-cortex_a9-linux-gnueabihf-ld -EL    -r -o kernel/events/built-in.o kernel/events/core.o kernel/events/hw_breakpoint.o 

@@ -1,1 +1,0 @@
-cmd_sound/soc/ux500/snd-soc-ux500-machine.o := /home/administrator/x-tools/arm-cortex_a9-linux-gnueabihf/bin/arm-cortex_a9-linux-gnueabihf-ld -EL    -r -o sound/soc/ux500/snd-soc-ux500-machine.o sound/soc/ux500/ux500_ab8500.o sound/soc/ux500/ux500_cg29xx.o 

@@ -1,1 +1,0 @@
-cmd_drivers/mmc/card/mmc_test.ko := /home/administrator/x-tools/arm-cortex_a9-linux-gnueabihf/bin/arm-cortex_a9-linux-gnueabihf-ld -EL -r  -T /home/administrator/kernel/kernel_3.0.8/scripts/module-common.lds --build-id  -o drivers/mmc/card/mmc_test.ko drivers/mmc/card/mmc_test.o drivers/mmc/card/mmc_test.mod.o

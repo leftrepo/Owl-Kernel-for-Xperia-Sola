@@ -1,1 +1,0 @@
-cmd_net/caif/built-in.o :=  /home/administrator/x-tools/arm-cortex_a9-linux-gnueabihf/bin/arm-cortex_a9-linux-gnueabihf-ld -EL    -r -o net/caif/built-in.o net/caif/caif.o net/caif/chnl_net.o net/caif/caif_socket.o 

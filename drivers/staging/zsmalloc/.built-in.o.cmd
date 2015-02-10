@@ -1,1 +1,0 @@
-cmd_drivers/staging/zsmalloc/built-in.o :=  /home/administrator/x-tools/arm-cortex_a9-linux-gnueabihf/bin/arm-cortex_a9-linux-gnueabihf-ld -EL    -r -o drivers/staging/zsmalloc/built-in.o drivers/staging/zsmalloc/zsmalloc.o 

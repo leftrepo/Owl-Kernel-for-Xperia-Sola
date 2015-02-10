@@ -1,3 +1,0 @@
-kernel/drivers/char/frandom.ko
-kernel/drivers/scsi/scsi_wait_scan.ko
-kernel/drivers/mmc/card/mmc_test.ko

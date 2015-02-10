@@ -1,1 +1,0 @@
-cmd_drivers/media/common/built-in.o :=  /home/administrator/x-tools/arm-cortex_a9-linux-gnueabihf/bin/arm-cortex_a9-linux-gnueabihf-ld -EL    -r -o drivers/media/common/built-in.o drivers/media/common/tuners/built-in.o 

@@ -1,1 +1,0 @@
-cmd_sound/drivers/pcsp/built-in.o :=  rm -f sound/drivers/pcsp/built-in.o; /home/administrator/x-tools/arm-cortex_a9-linux-gnueabihf/bin/arm-cortex_a9-linux-gnueabihf-ar rcsD sound/drivers/pcsp/built-in.o

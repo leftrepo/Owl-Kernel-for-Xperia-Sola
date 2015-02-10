@@ -1,1 +1,0 @@
-cmd_fs/partitions/built-in.o :=  /home/administrator/x-tools/arm-cortex_a9-linux-gnueabihf/bin/arm-cortex_a9-linux-gnueabihf-ld -EL    -r -o fs/partitions/built-in.o fs/partitions/check.o fs/partitions/blkdev_parts.o fs/partitions/msdos.o 

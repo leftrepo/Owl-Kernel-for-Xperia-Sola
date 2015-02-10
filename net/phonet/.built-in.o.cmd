@@ -1,1 +1,0 @@
-cmd_net/phonet/built-in.o :=  /home/administrator/x-tools/arm-cortex_a9-linux-gnueabihf/bin/arm-cortex_a9-linux-gnueabihf-ld -EL    -r -o net/phonet/built-in.o net/phonet/phonet.o net/phonet/pn_pep.o 
