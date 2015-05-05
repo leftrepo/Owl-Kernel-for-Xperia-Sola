@@ -883,16 +883,18 @@ EXPORT_SYMBOL_GPL(rt_mutex_destroy);
  * @lock: the rt lock to be initialized
  *
  * Initialize the rt lock to unlocked state.
+ *
  * Initializing of a locked rt lock is not allowed
  */
 void __rt_mutex_init(struct rt_mutex *lock, const char *name)
 {
 	lock->owner = NULL;
+	raw_spin_lock_init(&lock->wait_lock);
 	plist_head_init(&lock->wait_list);
 
 	debug_rt_mutex_init(lock, name);
 }
-EXPORT_SYMBOL(__rt_mutex_init);
+EXPORT_SYMBOL_GPL(__rt_mutex_init);
 
 /**
  * rt_mutex_init_proxy_locked - initialize and lock a rt_mutex on behalf of a
