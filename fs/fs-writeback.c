@@ -589,9 +589,6 @@ void writeback_inodes_wb(struct bdi_writeback *wb,
 		wbc->wb_start = jiffies; /* livelock avoidance */
 	spin_lock(&wb->list_lock);
 
-	if (list_empty(&wb->b_io))
-		queue_io(wb, wbc->older_than_this);
-
 	while (!list_empty(&wb->b_io)) {
 		struct inode *inode = wb_inode(wb->b_io.prev);
 		struct super_block *sb = inode->i_sb;
