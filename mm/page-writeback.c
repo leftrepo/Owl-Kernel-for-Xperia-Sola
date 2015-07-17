@@ -25,7 +25,6 @@
 #include <linux/task_io_accounting_ops.h>
 #include <linux/blkdev.h>
 #include <linux/mpage.h>
-#include <linux/earlysuspend.h>
 #include <linux/rmap.h>
 #include <linux/percpu.h>
 #include <linux/notifier.h>
@@ -88,7 +87,7 @@ unsigned long vm_dirty_bytes;
 /*
  * The interval between `kupdate'-style writebacks
  */
-unsigned int dirty_writeback_interval = 0; /* centiseconds */
+unsigned int dirty_writeback_interval = 5 * 100; /* centiseconds */
 
 /*
  * The longest time for which data is allowed to remain dirty
@@ -1434,21 +1433,7 @@ ratelimit_handler(struct notifier_block *self, unsigned long u, void *v)
 static struct notifier_block __cpuinitdata ratelimit_nb = {
 	.notifier_call	= ratelimit_handler,
 	.next		= NULL,
-}; 
-
-static void dirty_early_suspend(struct early_suspend *handler) 
-{
-  dirty_writeback_interval = 5 * 1000;
-}
-static void dirty_late_resume(struct early_suspend *handler)
-{
-  dirty_writeback_interval = 10 * 100;
-}
-
-static struct early_suspend dirty_suspend = {
-  .suspend = dirty_early_suspend,
-  .resume = dirty_late_resume,
-}; 
+};
 
 /*
  * Called early on to tune the page writeback dirty limits.
