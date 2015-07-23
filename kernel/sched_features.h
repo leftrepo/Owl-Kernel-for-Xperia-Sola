@@ -3,13 +3,18 @@
  * them to run sooner, but does not allow tons of sleepers to
  * rip the spread apart.
  */
-SCHED_FEAT(GENTLE_FAIR_SLEEPERS, 0)
+SCHED_FEAT(GENTLE_FAIR_SLEEPERS, 1)
 
 /*
  * Place new tasks ahead so that they do not starve already running
  * tasks
  */
 SCHED_FEAT(START_DEBIT, 1)
+
+/*
+ * Should wakeups try to preempt running tasks.
+ */
+SCHED_FEAT(WAKEUP_PREEMPT, 1)
 
 /*
  * Based on load and program behaviour, see if it makes sense to place
@@ -42,7 +47,7 @@ SCHED_FEAT(CACHE_HOT_BUDDY, 1)
 /*
  * Use arch dependent cpu power functions
  */
-SCHED_FEAT(ARCH_POWER, 1)
+SCHED_FEAT(ARCH_POWER, 0)
 
 SCHED_FEAT(HRTICK, 0)
 SCHED_FEAT(DOUBLE_TICK, 0)
@@ -56,9 +61,9 @@ SCHED_FEAT(LB_BIAS, 1)
 SCHED_FEAT(OWNER_SPIN, 1)
 
 /*
- * Decrement CPU power based on irq activity
+ * Decrement CPU power based on time not spent running tasks
  */
-SCHED_FEAT(NONIRQ_POWER, 1)
+SCHED_FEAT(NONTASK_POWER, 1)
 
 /*
  * Queue remote wakeups on the target CPU and process them

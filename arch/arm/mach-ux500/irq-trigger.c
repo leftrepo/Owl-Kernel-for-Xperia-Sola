@@ -13,6 +13,7 @@
 #include <linux/io.h>
 #include <linux/errno.h>
 #include <mach/hardware.h>
+#include <linux/kernel.h>
 #include <asm/hardware/gic.h>
 
 #define MIN_SPI_INTID	(32)
