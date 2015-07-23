@@ -128,7 +128,7 @@ void pm_clk_remove(struct device *dev, const char *con_id)
 	spin_lock_irq(&psd->lock);
 
 	list_for_each_entry(ce, &psd->clock_list, node) {
-		if (!con_id && !ce->con_id) {
+		if (!con_id && !ce->con_id)
 			goto remove;
 		else if (!con_id || !ce->con_id)
 			continue;
