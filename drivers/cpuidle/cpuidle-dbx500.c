@@ -247,7 +247,7 @@ static void restore_sequence(struct cpu_state *state)
 		/* Make sure have an MTU interrupt waiting for us */
 		WARN_ON(clockevents_program_event(mtu_clkevt,
 					  time_next,
-					  false));
+					  true));
 	}
 
 	spin_unlock(&cpuidle_lock);
