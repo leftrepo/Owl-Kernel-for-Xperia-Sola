@@ -28,7 +28,7 @@ static struct cpufreq_frequency_table db8500_freq_table[] = {
 		.raw_freq = 0x00050168, 
 		.varm_sel = 0x0C,
 		.varm_raw = 0x12,
-		.vbb_raw =  0xDB,
+		.vbb_raw =  0x12,
 		.ddr_opp = 25,
 		.ape_opp = 25,
 	},
@@ -39,8 +39,8 @@ static struct cpufreq_frequency_table db8500_freq_table[] = {
 		.opp = ARM_50_OPP,
 		.raw_freq = 0x01050168, 
 		.varm_sel = 0x0C,
-		.varm_raw = 0x12,
-		.vbb_raw =  0xDB,
+		.varm_raw = 0x12, //default=0x1A
+		.vbb_raw =  0x12, //default=0x12
 		.ddr_opp = 25,
 		.ape_opp = 50,
 	},
@@ -51,8 +51,8 @@ static struct cpufreq_frequency_table db8500_freq_table[] = {
 		.opp = ARM_50_OPP,
 		.raw_freq = 0x00010110,
 		.varm_sel = 0x0C,
-		.varm_raw = 0x20,
-		.vbb_raw =  0xDB,
+		.varm_raw = 0x20, //default=0x1A
+		.vbb_raw =  0x12, //default=0x12
 		.ddr_opp = 50,
 		.ape_opp = 50,
 	},
@@ -62,9 +62,9 @@ static struct cpufreq_frequency_table db8500_freq_table[] = {
 		.is_overclocked = 1,
 		.opp = ARM_100_OPP,
 		.raw_freq = 0x00050168, 
-		.varm_sel = 0x0B, 
-		.varm_raw = 0x24, 
-		.vbb_raw = 0xDB,
+		.varm_sel = 0x0B,
+		.varm_raw = 0x24, //default=0x27
+		.vbb_raw = 0x10, //default=0x10
 		.ddr_opp = 100,
 		.ape_opp = 50,
 	},
@@ -75,8 +75,8 @@ static struct cpufreq_frequency_table db8500_freq_table[] = {
 		.opp = ARM_100_OPP,
 		.raw_freq = 0x0001011A,  
 		.varm_sel = 0x0B,
-		.varm_raw = 0x2F,
-		.vbb_raw = 0xDB,
+		.varm_raw = 0x2F, //default=0x31
+		.vbb_raw = 0x10, //default=0x10
 		.ddr_opp = 100,
 		.ape_opp = 100,
 	},
@@ -87,7 +87,7 @@ static struct cpufreq_frequency_table db8500_freq_table[] = {
 		.opp = ARM_MAX_OPP,
 		.raw_freq = 0x0004017D,
 		.varm_sel = 0x0B,
-		.varm_raw = 0x30,
+		.varm_raw = 0x35,
 		.vbb_raw = 0x8F,
 		.ddr_opp = 100,
 		.ape_opp = 100,
