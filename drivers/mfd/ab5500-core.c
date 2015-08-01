@@ -2598,7 +2598,7 @@ static int __init ab5500_probe(struct platform_device *pdev)
 
 	}
 	/* This real unpredictable IRQ is of course sampled for entropy */
-	rand_initialize_irq(res->start);
+	//rand_initialize_irq(res->start);
 
 	err = abx500_register_ops(&pdev->dev, &ab5500_ops);
 	if (err) {
