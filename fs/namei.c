@@ -793,7 +793,7 @@ static int follow_automount(struct path *path, unsigned flags,
 	 * of the daemon to instantiate them before they can be used.
 	 */
 	if (!(flags & (LOOKUP_CONTINUE | LOOKUP_DIRECTORY |
-		     LOOKUP_OPEN | LOOKUP_CREATE | LOOKUP_AUTOMOUNT)) &&
+		     LOOKUP_OPEN | LOOKUP_CREATE)) &&
 	    path->dentry->d_inode)
 		return -EISDIR;
 

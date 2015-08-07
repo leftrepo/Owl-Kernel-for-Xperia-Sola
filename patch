@@ -1,30 +1,26 @@
-diff --git a/fs/block_dev.c b/fs/block_dev.c
-index 53ab273..c103267 100644
---- a/fs/block_dev.c
-+++ b/fs/block_dev.c
-@@ -55,17 +55,24 @@ static void bdev_inode_switch_bdi(struct inode *inode,
- 			struct backing_dev_info *dst)
- {
- 	struct backing_dev_info *old = inode->i_data.backing_dev_info;
-+	bool wakeup_bdi = false;
+diff --git a/fs/namei.c b/fs/namei.c
+index f478836..09606fd 100644
+--- a/fs/namei.c
++++ b/fs/namei.c
+@@ -739,7 +739,7 @@ static int follow_automount(struct path *path, unsigned flags,
+ 	 * of the daemon to instantiate them before they can be used.
+ 	 */
+ 	if (!(flags & (LOOKUP_PARENT | LOOKUP_DIRECTORY |
+-		     LOOKUP_OPEN | LOOKUP_CREATE)) &&
++		     LOOKUP_OPEN | LOOKUP_CREATE | LOOKUP_AUTOMOUNT)) &&
+ 	    path->dentry->d_inode)
+ 		return -EISDIR;
  
- 	if (unlikely(dst == old))		/* deadlock avoidance */
- 		return;
- 	bdi_lock_two(&old->wb, &dst->wb);
- 	spin_lock(&inode->i_lock);
- 	inode->i_data.backing_dev_info = dst;
--	if (inode->i_state & I_DIRTY)
-+	if (inode->i_state & I_DIRTY) {
-+		if (bdi_cap_writeback_dirty(dst) && !wb_has_dirty_io(&dst->wb))
-+			wakeup_bdi = true;
- 		list_move(&inode->i_wb_list, &dst->wb.b_dirty);
-+	}
- 	spin_unlock(&inode->i_lock);
- 	spin_unlock(&old->wb.list_lock);
- 	spin_unlock(&dst->wb.list_lock);
-+
-+	if (wakeup_bdi)
-+		bdi_wakeup_thread_delayed(dst);
- }
+diff --git a/include/linux/namei.h b/include/linux/namei.h
+index 76fe2c6..e13dac7 100644
+--- a/include/linux/namei.h
++++ b/include/linux/namei.h
+@@ -48,6 +48,7 @@ enum {LAST_NORM, LAST_ROOT, LAST_DOT, LAST_DOTDOT, LAST_BIND};
+  */
+ #define LOOKUP_FOLLOW		0x0001
+ #define LOOKUP_DIRECTORY	0x0002
++#define LOOKUP_AUTOMOUNT	0x0004
  
- sector_t blkdev_max_block(struct block_device *bdev)
+ #define LOOKUP_PARENT		0x0010
+ #define LOOKUP_REVAL		0x0020
+
