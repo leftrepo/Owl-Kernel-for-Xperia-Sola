@@ -697,7 +697,7 @@ static enum page_references page_check_references(struct page *page,
 		return PAGEREF_RECLAIM;
 
 	if (referenced_ptes) {
-		if (PageSwapBacked(page))
+		if (PageAnon(page))
 			return PAGEREF_ACTIVATE;
 		/*
 		 * All mapped pages start out with page table
@@ -1049,39 +1049,8 @@ int __isolate_lru_page(struct page *page, isolate_mode_t mode, int file)
 
 	ret = -EBUSY;
 
-	/*
-	 * To minimise LRU disruption, the caller can indicate that it only
-	 * wants to isolate pages it will be able to operate on without
-	 * blocking - clean pages for the most part.
-	 *
-	 * ISOLATE_CLEAN means that only clean pages should be isolated. This
-	 * is used by reclaim when it is cannot write to backing storage
-	 *
-	 * ISOLATE_ASYNC_MIGRATE is used to indicate that it only wants to pages
-	 * that it is possible to migrate without blocking
-	 */
-	if (mode & (ISOLATE_CLEAN|ISOLATE_ASYNC_MIGRATE)) {
-		/* All the caller can do on PageWriteback is block */
-		if (PageWriteback(page))
-			return ret;
-
-		if (PageDirty(page)) {
-			struct address_space *mapping;
-
-			/* ISOLATE_CLEAN means only clean pages */
-			if (mode & ISOLATE_CLEAN)
-				return ret;
-
-			/*
-			 * Only pages without mappings or that have a
-			 * ->migratepage callback are possible to migrate
-			 * without blocking
-			 */
-			mapping = page_mapping(page);
-			if (mapping && !mapping->a_ops->migratepage)
-				return ret;
-		}
-	}
+	if ((mode & ISOLATE_CLEAN) && (PageDirty(page) || PageWriteback(page)))
+		return ret;
 
 	if ((mode & ISOLATE_UNMAPPED) && page_mapped(page))
 		return ret;
@@ -1363,8 +1332,8 @@ static int too_many_isolated(struct zone *zone, int file,
  */
 static noinline_for_stack void
 putback_lru_pages(struct zone *zone, struct scan_control *sc,
-		  unsigned long nr_anon, unsigned long nr_file,
-		  struct list_head *page_list, unsigned long nr_reclaimed)
+				unsigned long nr_anon, unsigned long nr_file,
+				struct list_head *page_list)
 {
 	struct page *page;
 	struct pagevec pvec;
@@ -1375,12 +1344,7 @@ putback_lru_pages(struct zone *zone, struct scan_control *sc,
 	/*
 	 * Put back any unfreeable pages.
 	 */
-	spin_lock_irq(&zone->lru_lock);
-
-	if (current_is_kswapd())
-		__count_vm_events(KSWAPD_STEAL, nr_reclaimed);
-	__count_zone_vm_events(PGSTEAL, zone, nr_reclaimed);
-
+	spin_lock(&zone->lru_lock);
 	while (!list_empty(page_list)) {
 		int lru;
 		page = lru_to_page(page_list);
@@ -1467,7 +1431,7 @@ static inline bool should_reclaim_stall(unsigned long nr_taken,
 	if (sc->reclaim_mode & RECLAIM_MODE_SINGLE)
 		return false;
 
-	/* If we have relaimed everything on the isolated list, no stall */
+	/* If we have reclaimed everything on the isolated list, no stall */
 	if (nr_freed == nr_taken)
 		return false;
 
@@ -1563,7 +1527,12 @@ shrink_inactive_list(unsigned long nr_to_scan, struct zone *zone,
 					priority, &nr_dirty, &nr_writeback);
 	}
 
-	putback_lru_pages(zone, sc, nr_anon, nr_file, &page_list, nr_reclaimed);
+	local_irq_disable();
+	if (current_is_kswapd())
+		__count_vm_events(KSWAPD_STEAL, nr_reclaimed);
+	__count_zone_vm_events(PGSTEAL, zone, nr_reclaimed);
+
+	putback_lru_pages(zone, sc, nr_anon, nr_file, &page_list);
 
 	/*
 	 * If reclaim is isolating dirty pages under writeback, it implies
@@ -2108,42 +2077,6 @@ restart:
 	throttle_vm_writeout(sc->gfp_mask);
 }
 
-/* Returns true if compaction should go ahead for a high-order request */
-static inline bool compaction_ready(struct zone *zone, struct scan_control *sc)
-{
-	unsigned long balance_gap, watermark;
-	bool watermark_ok;
-
-	/* Do not consider compaction for orders reclaim is meant to satisfy */
-	if (sc->order <= PAGE_ALLOC_COSTLY_ORDER)
-		return false;
-
-	/*
-	 * Compaction takes time to run and there are potentially other
-	 * callers using the pages just freed. Continue reclaiming until
-	 * there is a buffer of free pages available to give compaction
-	 * a reasonable chance of completing and allocating the page
-	 */
-	balance_gap = min(low_wmark_pages(zone),
-		(zone->present_pages + KSWAPD_ZONE_BALANCE_GAP_RATIO-1) /
-			KSWAPD_ZONE_BALANCE_GAP_RATIO);
-	watermark = high_wmark_pages(zone) + balance_gap + (2UL << sc->order);
-	watermark_ok = zone_watermark_ok_safe(zone, 0, watermark, 0, 0);
-
-	/*
-	 * If compaction is deferred, reclaim up to a point where
-	 * compaction will have a chance of success when re-enabled
-	 */
-	if (compaction_deferred(zone))
-		return watermark_ok;
-
-	/* If compaction is not ready to start, keep reclaiming */
-	if (!compaction_suitable(zone, sc->order))
-		return false;
-
-	return watermark_ok;
-}
-
 /*
  * This is the direct reclaim path, for page-allocating processes.  We only
  * try to reclaim pages from zones which will satisfy the caller's allocation
@@ -2161,9 +2094,8 @@ static inline bool compaction_ready(struct zone *zone, struct scan_control *sc)
  * scan then give up on it.
  *
  * This function returns true if a zone is being reclaimed for a costly
- * high-order allocation and compaction is ready to begin. This indicates to
- * the caller that it should consider retrying the allocation instead of
- * further reclaim.
+ * high-order allocation and compaction is either ready to begin or deferred.
+ * This indicates to the caller that it should retry the allocation or fail.
  */
 static bool shrink_zones(int priority, struct zonelist *zonelist,
 					struct scan_control *sc)
@@ -2172,7 +2104,7 @@ static bool shrink_zones(int priority, struct zonelist *zonelist,
 	struct zone *zone;
 	unsigned long nr_soft_reclaimed;
 	unsigned long nr_soft_scanned;
-	bool aborted_reclaim = false;
+	bool should_abort_reclaim = false;
 
 	for_each_zone_zonelist_nodemask(zone, z, zonelist,
 					gfp_zone(sc->gfp_mask), sc->nodemask) {
@@ -2197,8 +2129,10 @@ static bool shrink_zones(int priority, struct zonelist *zonelist,
 				 * noticable problem, like transparent huge page
 				 * allocations.
 				 */
-				if (compaction_ready(zone, sc)) {
-					aborted_reclaim = true;
+				if (sc->order > PAGE_ALLOC_COSTLY_ORDER &&
+					(compaction_suitable(zone, sc->order) ||
+					 compaction_deferred(zone))) {
+					should_abort_reclaim = true;
 					continue;
 				}
 			}
@@ -2220,7 +2154,7 @@ static bool shrink_zones(int priority, struct zonelist *zonelist,
 		shrink_zone(priority, zone, sc);
 	}
 
-	return aborted_reclaim;
+	return should_abort_reclaim;
 }
 
 static bool zone_reclaimable(struct zone *zone)
@@ -2274,8 +2208,8 @@ static unsigned long do_try_to_free_pages(struct zonelist *zonelist,
 	struct zoneref *z;
 	struct zone *zone;
 	unsigned long writeback_threshold;
-	bool aborted_reclaim;
 
+	get_mems_allowed();
 	delayacct_freepages_start();
 
 	if (scanning_global_lru(sc))
@@ -2285,7 +2219,8 @@ static unsigned long do_try_to_free_pages(struct zonelist *zonelist,
 		sc->nr_scanned = 0;
 		if (!priority)
 			disable_swap_token(sc->mem_cgroup);
-		aborted_reclaim = shrink_zones(priority, zonelist, sc);
+		if (shrink_zones(priority, zonelist, sc))
+			break;
 
 		/*
 		 * Don't shrink slabs when reclaiming memory from
@@ -2339,6 +2274,7 @@ static unsigned long do_try_to_free_pages(struct zonelist *zonelist,
 
 out:
 	delayacct_freepages_end();
+	put_mems_allowed();
 
 	if (sc->nr_reclaimed)
 		return sc->nr_reclaimed;
@@ -2350,10 +2286,6 @@ out:
 	 */
 	if (oom_killer_disabled)
 		return 0;
-
-	/* Aborted reclaim to try compaction? don't OOM, then */
-	if (aborted_reclaim)
-		return 1;
 
 	/* top priority shrink_zones still had more to do? don't OOM, then */
 	if (scanning_global_lru(sc) && !all_unreclaimable(zonelist, sc))
@@ -2881,10 +2813,7 @@ static void kswapd_try_to_sleep(pg_data_t *pgdat, int order, int classzone_idx)
 		 * them before going back to sleep.
 		 */
 		set_pgdat_percpu_threshold(pgdat, calculate_normal_threshold);
-
-		if (!kthread_should_stop())
-			schedule();
-
+		schedule();
 		set_pgdat_percpu_threshold(pgdat, calculate_pressure_threshold);
 	} else {
 		if (remaining)
@@ -2996,8 +2925,6 @@ static int kswapd(void *p)
 						&balanced_classzone_idx);
 		}
 	}
-
-	current->reclaim_state = NULL;
 	return 0;
 }
 
@@ -3152,17 +3079,14 @@ int kswapd_run(int nid)
 }
 
 /*
- * Called by memory hotplug when all memory in a node is offlined.  Caller must
- * hold lock_memory_hotplug().
+ * Called by memory hotplug when all memory in a node is offlined.
  */
 void kswapd_stop(int nid)
 {
 	struct task_struct *kswapd = NODE_DATA(nid)->kswapd;
 
-	if (kswapd) {
+	if (kswapd)
 		kthread_stop(kswapd);
-		NODE_DATA(nid)->kswapd = NULL;
-	}
 }
 
 static int __init kswapd_init(void)
