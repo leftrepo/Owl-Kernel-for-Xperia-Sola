@@ -15,7 +15,6 @@ static int uptime_proc_show(struct seq_file *m, void *v)
 	u64 nsec;
 	u32 rem;
 	int i;
-	u64 idletime = 0;
 
 	idletime = 0;
 	for_each_possible_cpu(i)
