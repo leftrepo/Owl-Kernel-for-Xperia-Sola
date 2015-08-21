@@ -305,6 +305,13 @@
  * These aren't exported outside the kernel to avoid name space clashes
  */
 /*
+ * linux/include/asm-generic/sizes.h
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
+/*
  * Copyright (C) 2009 ST-Ericsson
  *
  * This program is free software; you can redistribute it and/or modify
@@ -318,13 +325,6 @@
 /*
  * STE NMF CM driver only used on the U8500 allocate using dma_alloc_coherent:
  *    8M for SIA and SVA data + 2M for SIA code + 2M for SVA code
- */
-/*
- * linux/include/asm-generic/sizes.h
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 /*
  * Allow for constants defined here to be used from assembly code
