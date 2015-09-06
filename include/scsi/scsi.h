@@ -77,6 +77,7 @@ struct scsi_cmnd;
 #define READ_FORMAT_CAPACITIES 0x23
 #define SET_WINDOW            0x24
 #define READ_CAPACITY         0x25
+#define READ_CAPACITY_16      0x9e
 #define READ_10               0x28
 #define WRITE_10              0x2a
 #define SEEK_10               0x2b
@@ -495,7 +496,7 @@ static inline int scsi_is_wlun(unsigned int lun)
 
 #define sense_class(sense)  (((sense) >> 4) & 0x7)
 #define sense_error(sense)  ((sense) & 0xf)
-#define sense_valid(sense)  ((sense) & 0x80)
+#define sense_valid(sense)  ((sense) & 0x80);
 
 /*
  * default timeouts

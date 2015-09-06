@@ -115,7 +115,7 @@ struct iscsi_task {
 	/* copied values in case we need to send tmfs */
 	itt_t			hdr_itt;
 	__be32			cmdsn;
-	struct scsi_lun		lun;
+	uint8_t			lun[8];
 
 	int			itt;		/* this ITT */
 
