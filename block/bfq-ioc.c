@@ -122,19 +122,10 @@ static void __bfq_exit_single_io_context(struct bfq_data *bfqd,
 		cic->cfqq[BLK_RW_ASYNC] = NULL;
 	}
 
-	spin_lock(&bfqd->eqm_lock);
 	if (cic->cfqq[BLK_RW_SYNC] != NULL) {
-		/*
-		 * If the bic is using a shared queue, put the reference
-		 * taken on the io_context when the bic started using a
-		 * shared bfq_queue.
-		 */
-		if (bfq_bfqq_coop(cic->cfqq[BLK_RW_SYNC]))
-			put_io_context(ioc);
 		bfq_exit_bfqq(bfqd, cic->cfqq[BLK_RW_SYNC]);
 		cic->cfqq[BLK_RW_SYNC] = NULL;
 	}
-	spin_unlock(&bfqd->eqm_lock);
 }
 
 /**
