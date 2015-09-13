@@ -1,21 +1,22 @@
 /*
-* V(R) I/O Scheduler
-*
-* Copyright (C) 2007 Aaron Carroll <aaronc@gelato.unsw.edu.au>
-*
-*
-* The algorithm:
-*
-* The next request is decided based on its distance from the last
-* request, with a multiplicative penalty of `rev_penalty' applied
-* for reversing the head direction. A rev_penalty of 1 means SSTF
-* behaviour. As this variable is increased, the algorithm approaches
-* pure SCAN. Setting rev_penalty to 0 forces SCAN.
-*
-* Async and synch requests are not treated seperately. Instead we
-* rely on deadlines to ensure fairness.
-*
-*/
+ * V(R) I/O Scheduler
+ *
+ * Copyright (C) 2007 Aaron Carroll <aaronc@gelato.unsw.edu.au>
+ * Copyright (c) 2013, TripNDroid Mobile Engineering
+ *
+ * The algorithm:
+ *
+ * The next request is decided based on its distance from the last
+ * request, with a multiplicative penalty of `rev_penalty' applied
+ * for reversing the head direction.  A rev_penalty of 1 means SSTF
+ * behaviour. As this variable is increased, the algorithm approaches
+ * pure SCAN.  Setting rev_penalty to 0 forces SCAN.
+ *
+ * Async and synch requests are not treated seperately.  Instead we
+ * rely on deadlines to ensure fairness.
+ *
+ */
+
 #include <linux/kernel.h>
 #include <linux/fs.h>
 #include <linux/blkdev.h>
@@ -40,10 +41,11 @@ enum vr_head_dir {
 	BACKWARD,
 };
 
-static const int sync_expire = HZ / 2; /* max time before a sync is submitted. */
-static const int async_expire = 5 * HZ; /* ditto for async, these limits are SOFT! */
-static const int fifo_batch = 16;
-static const int rev_penalty = 10; /* penalty for reversing head direction */
+static const int sync_expire = HZ / 3;  /* max time before a sync is submitted. */
+static const int async_expire = 6 * HZ; /* ditto for async, these limits are SOFT! */
+static const int fifo_batch = 8;	/* # of sequential requests treated as one
+					   by the above parameters. For throughput. */
+static const int rev_penalty = 10;	/* penalty for reversing head direction */
 
 struct vr_data {
 	struct rb_root sort_list;
@@ -64,22 +66,14 @@ struct vr_data {
 
 static void vr_move_request(struct vr_data *, struct request *);
 
-static inline struct vr_data *
-vr_get_data(struct request_queue *q)
+static inline struct vr_data *vr_get_data(struct request_queue *q)
 {
 	return q->elevator->elevator_data;
 }
 
-static void
-vr_add_rq_rb(struct vr_data *vd, struct request *rq)
+static void vr_add_rq_rb(struct vr_data *vd, struct request *rq)
 {
-	struct request *alias = elv_rb_add(&vd->sort_list, rq);
-
-	if (unlikely(alias)) {
-		vr_move_request(vd, alias);
-		alias = elv_rb_add(&vd->sort_list, rq);
-		BUG_ON(alias);
-	}
+	elv_rb_add(&vd->sort_list, rq);
 
 	if (blk_rq_pos(rq) >= vd->last_sector) {
 		if (!vd->next_rq || blk_rq_pos(vd->next_rq) > blk_rq_pos(rq))
@@ -93,8 +87,7 @@ vr_add_rq_rb(struct vr_data *vd, struct request *rq)
 	BUG_ON(vd->next_rq && vd->prev_rq && blk_rq_pos(vd->next_rq) < blk_rq_pos(vd->prev_rq));
 }
 
-static void
-vr_del_rq_rb(struct vr_data *vd, struct request *rq)
+static void vr_del_rq_rb(struct vr_data *vd, struct request *rq)
 {
 	/*
 	* We might be deleting our cached next request.
@@ -447,5 +440,3 @@ module_exit(vr_exit);
 MODULE_AUTHOR("Aaron Carroll");
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("V(R) IO scheduler");
-
-
