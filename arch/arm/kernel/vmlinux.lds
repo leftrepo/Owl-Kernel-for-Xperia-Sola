@@ -323,10 +323,6 @@
  * Physical DRAM offset.
  */
 /*
- * STE NMF CM driver only used on the U8500 allocate using dma_alloc_coherent:
- *    8M for SIA and SVA data + 2M for SIA code + 2M for SVA code
- */
-/*
  * Allow for constants defined here to be used from assembly code
  * by prepending the UL suffix only with actual C code compilation.
  */

@@ -164,7 +164,7 @@ static int ab5500_temp_irq_handler(int irq, struct abx500_temp *data)
 	return 0;
 }
 
-int __init abx500_hwmon_init(struct abx500_temp *data)
+/*int __init abx500_hwmon_init(struct abx500_temp *data)
 {
 	int err;
 
@@ -181,7 +181,7 @@ int __init abx500_hwmon_init(struct abx500_temp *data)
 		dev_err(&data->pdev->dev, "Failed to register"
 				" auto trigger(%d)\n", err);
 		return err;
-	}
+	}*/
 
 	/*
 	 * Setup HW defined data.
@@ -194,7 +194,7 @@ int __init abx500_hwmon_init(struct abx500_temp *data)
 	 * Make sure indexes correspond to the attribute indexes
 	 * used when calling SENSOR_DEVICE_ATRR
 	 */
-	data->gpadc_addr[0] = XTAL_TEMP;
+	/*data->gpadc_addr[0] = XTAL_TEMP;
 	data->gpadc_addr[1] = PCB_TEMP;
 	data->gpadc_addr[2] = BTEMP_BALL;
 	data->gpadc_addr[3] = BAT_CTRL;
@@ -208,4 +208,4 @@ int __init abx500_hwmon_init(struct abx500_temp *data)
 	data->ops.is_visible = ab5500_is_visible;
 
 	return 0;
-}
+}*/
