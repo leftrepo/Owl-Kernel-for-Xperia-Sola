@@ -1894,9 +1894,9 @@ int cgroup_attach_task(struct cgroup *cgrp, struct task_struct *tsk)
 	struct cgroup_subsys *ss, *failed_ss = NULL;
 	struct cgroup *oldcgrp;
 	struct cgroupfs_root *root = cgrp->root;
-	struct css_set *cg;
 	struct cgroup_taskset tset = { };
 	struct css_set *newcg;
+	struct css_set *cg;
 
 	/* @tsk either already exited or can't exit until the end */
 	if (tsk->flags & PF_EXITING)
@@ -1932,14 +1932,20 @@ int cgroup_attach_task(struct cgroup *cgrp, struct task_struct *tsk)
 		goto out;
 	}
 
+	task_lock(tsk);
+	cg = tsk->cgroups;
+	get_css_set(cg);
+	task_unlock(tsk);
+
 	cgroup_task_migrate(cgrp, oldcgrp, tsk, newcg);
 
 	for_each_subsys(root, ss) {
 		if (ss->attach)
 			ss->attach(ss, cgrp, &tset);
 	}
-
-	synchronize_rcu();
+	set_bit(CGRP_RELEASABLE, &cgrp->flags);
+	/* put_css_set will not destroy cg until after an RCU grace period */
+	put_css_set(cg);
 
 	/*
 	 * wake up rmdir() waiter. the rmdir should fail since the cgroup
@@ -2138,24 +2144,6 @@ out_cancel_attach:
 out_free_group_list:
 	flex_array_free(group);
 	return retval;
-}
-
-static int cgroup_allow_attach(struct cgroup *cgrp, struct task_struct *tsk)
-{
-	struct cgroup_subsys *ss;
-	int ret;
-
-	for_each_subsys(cgrp->root, ss) {
-		if (ss->allow_attach) {
-			ret = ss->allow_attach(cgrp, tsk);
-			if (ret)
-				return ret;
-		} else {
-			return -EACCES;
-		}
-	}
-
-	return 0;
 }
 
 /*
