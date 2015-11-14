@@ -374,39 +374,6 @@ ENTRY(stext)
 jiffies = jiffies_64;
 SECTIONS
 {
- . = 0xC0000000 + 0x00008000;
- .init : { /* Init code and data		*/
-  _stext = .;
-  _sinittext = .;
-   *(.head.text)
-   *(.init.text) *(.meminit.text)
-   *(.exit.text) *(.memexit.text)
-  _einittext = .;
- 
-  __arch_info_begin = .;
-   *(.arch.info.init)
-  __arch_info_end = .;
-  __tagtable_begin = .;
-   *(.taglist.init)
-  __tagtable_end = .;
-  __smpalt_begin = .;
-   *(.alt.smp.init)
-  __smpalt_end = .;
-  __pv_table_begin = .;
-   *(.pv_table)
-  __pv_table_end = .;
-  . = ALIGN(16); __setup_start = .; *(.init.setup) __setup_end = .;
-  __initcall_start = .; *(.initcallearly.init) __initcall0_start = .; *(.initcall0.init) *(.initcall0s.init) __initcall1_start = .; *(.initcall1.init) *(.initcall1s.init) __initcall2_start = .; *(.initcall2.init) *(.initcall2s.init) __initcall3_start = .; *(.initcall3.init) *(.initcall3s.init) __initcall4_start = .; *(.initcall4.init) *(.initcall4s.init) __initcall5_start = .; *(.initcall5.init) *(.initcall5s.init) __initcallrootfs_start = .; *(.initcallrootfs.init) *(.initcallrootfss.init) __initcall6_start = .; *(.initcall6.init) *(.initcall6s.init) __initcall7_start = .; *(.initcall7.init) *(.initcall7s.init) __initcall_end = .;
-  __con_initcall_start = .; *(.con_initcall.init) __con_initcall_end = .;
-  __security_initcall_start = .; *(.security_initcall.init) __security_initcall_end = .;
-  . = ALIGN(4); __initramfs_start = .; *(.init.ramfs) . = ALIGN(8); *(.init.ramfs.info)
-  __init_begin = _stext;
-  *(.init.data) *(.meminit.data) *(.init.rodata) *(.meminit.rodata) . = ALIGN(32); __dtb_start = .; *(.dtb.init.rodata) __dtb_end = .;
-  *(.exit.data) *(.memexit.data) *(.memexit.rodata)
- }
- . = ALIGN((1 << 12)); .data..percpu : AT(ADDR(.data..percpu) - 0) { __per_cpu_load = .; __per_cpu_start = .; *(.data..percpu..first) . = ALIGN((1 << 12)); *(.data..percpu..page_aligned) . = ALIGN(32); *(.data..percpu..readmostly) . = ALIGN(32); *(.data..percpu) *(.data..percpu..shared_aligned) __per_cpu_end = .; }
- . = ALIGN((1 << 12));
- __init_end = .;
  /*
 	 * unwind exit sections must be discarded before the rest of the
 	 * unwind sections get included.
@@ -416,6 +383,11 @@ SECTIONS
   *(.ARM.extab.exit.text)
  
  
+ }
+ . = 0xC0000000 + 0x00008000;
+ .head.text : {
+  _stext = .;
+  *(.head.text)
  }
  .text : { /* Real text segment		*/
   _text = .; /* Text and read-only data	*/
@@ -429,8 +401,6 @@ SECTIONS
    . = ALIGN(8); __kprobes_text_start = .; *(.kprobes.text) __kprobes_text_end = .;
    *(.fixup)
    *(.gnu.warning)
-   *(.rodata)
-   *(.rodata.*)
    *(.glue_7)
    *(.glue_7t)
   . = ALIGN(4);
@@ -453,6 +423,48 @@ SECTIONS
   __stop_unwind_tab = .;
  }
  _etext = .; /* End of text and rodata section */
+ . = ALIGN((1 << 12));
+ __init_begin = .;
+ . = ALIGN(8); .init.text : AT(ADDR(.init.text) - 0) { _sinittext = .; *(.init.text) *(.meminit.text) _einittext = .; }
+ .exit.text : {
+  *(.exit.text) *(.memexit.text)
+ }
+ .init.proc.info : {
+ 
+ }
+ .init.arch.info : {
+  __arch_info_begin = .;
+  *(.arch.info.init)
+  __arch_info_end = .;
+ }
+ .init.tagtable : {
+  __tagtable_begin = .;
+  *(.taglist.init)
+  __tagtable_end = .;
+ }
+ .init.smpalt : {
+  __smpalt_begin = .;
+  *(.alt.smp.init)
+  __smpalt_end = .;
+ }
+ .init.pv_table : {
+  __pv_table_begin = .;
+  *(.pv_table)
+  __pv_table_end = .;
+ }
+ .init.data : {
+  *(.init.data) *(.meminit.data) *(.init.rodata) *(.meminit.rodata) . = ALIGN(32); __dtb_start = .; *(.dtb.init.rodata) __dtb_end = .;
+  . = ALIGN(16); __setup_start = .; *(.init.setup) __setup_end = .;
+  __initcall_start = .; *(.initcallearly.init) __initcall0_start = .; *(.initcall0.init) *(.initcall0s.init) __initcall1_start = .; *(.initcall1.init) *(.initcall1s.init) __initcall2_start = .; *(.initcall2.init) *(.initcall2s.init) __initcall3_start = .; *(.initcall3.init) *(.initcall3s.init) __initcall4_start = .; *(.initcall4.init) *(.initcall4s.init) __initcall5_start = .; *(.initcall5.init) *(.initcall5s.init) __initcallrootfs_start = .; *(.initcallrootfs.init) *(.initcallrootfss.init) __initcall6_start = .; *(.initcall6.init) *(.initcall6s.init) __initcall7_start = .; *(.initcall7.init) *(.initcall7s.init) __initcall_end = .;
+  __con_initcall_start = .; *(.con_initcall.init) __con_initcall_end = .;
+  __security_initcall_start = .; *(.security_initcall.init) __security_initcall_end = .;
+  . = ALIGN(4); __initramfs_start = .; *(.init.ramfs) . = ALIGN(8); *(.init.ramfs.info)
+ }
+ .exit.data : {
+  *(.exit.data) *(.memexit.data) *(.memexit.rodata)
+ }
+ . = ALIGN((1 << 12)); .data..percpu : AT(ADDR(.data..percpu) - 0) { __per_cpu_load = .; __per_cpu_start = .; *(.data..percpu..first) . = ALIGN((1 << 12)); *(.data..percpu..page_aligned) . = ALIGN(32); *(.data..percpu..readmostly) . = ALIGN(32); *(.data..percpu) *(.data..percpu..shared_aligned) __per_cpu_end = .; }
+ __init_end = .;
  . = ALIGN(8192);
  __data_loc = .;
  .data : AT(__data_loc) {
