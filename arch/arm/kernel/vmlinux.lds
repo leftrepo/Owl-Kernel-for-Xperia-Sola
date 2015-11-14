@@ -375,6 +375,11 @@ jiffies = jiffies_64;
 SECTIONS
 {
  /*
+	 * XXX: The linker does not define how output sections are
+	 * assigned to input sections when there are multiple statements
+	 * matching the same input section name.  There is no documented
+	 * order of matching.
+	 *
 	 * unwind exit sections must be discarded before the rest of the
 	 * unwind sections get included.
 	 */
@@ -383,14 +388,19 @@ SECTIONS
   *(.ARM.extab.exit.text)
  
  
+ 
+ 
+  *(.exitcall.exit)
+  *(.discard)
+  *(.discard.*)
  }
  . = 0xC0000000 + 0x00008000;
  .head.text : {
-  _stext = .;
+  _text = .;
   *(.head.text)
  }
  .text : { /* Real text segment		*/
-  _text = .; /* Text and read-only data	*/
+  _stext = .; /* Text and read-only data	*/
    __exception_text_start = .;
    *(.exception.text)
    __exception_text_end = .;
@@ -498,8 +508,6 @@ SECTIONS
  _end = .;
  .stab 0 : { *(.stab) } .stabstr 0 : { *(.stabstr) } .stab.excl 0 : { *(.stab.excl) } .stab.exclstr 0 : { *(.stab.exclstr) } .stab.index 0 : { *(.stab.index) } .stab.indexstr 0 : { *(.stab.indexstr) } .comment 0 : { *(.comment) }
  .comment 0 : { *(.comment) }
- /* Default discards */
- /DISCARD/ : { *(.exit.text) *(.memexit.text) *(.exit.data) *(.memexit.data) *(.memexit.rodata) *(.exitcall.exit) *(.discard) *(.discard.*) }
 }
 /*
  * These must never be empty
