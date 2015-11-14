@@ -12,7 +12,7 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/module.h>
+#include <linux/export.h>
 #include <linux/spinlock.h>
 #include <linux/fs.h>
 #include <linux/mm.h>
@@ -77,7 +77,7 @@ unsigned long dirty_background_bytes;
  * free highmem will not be subtracted from the total free memory
  * for calculating free ratios if vm_highmem_is_dirtyable is true
  */
-int vm_highmem_is_dirtyable=1;
+int vm_highmem_is_dirtyable;
 
 /*
  * The generator of dirty data starts writeback at this percentage
@@ -1521,6 +1521,7 @@ static struct notifier_block __cpuinitdata ratelimit_nb = {
 void __init page_writeback_init(void)
 {
 	int shift;
+
 	writeback_set_ratelimit();
 	register_cpu_notifier(&ratelimit_nb);
 
