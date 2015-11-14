@@ -97,8 +97,7 @@ void cpu_idle(void)
 
 	/* endless idle loop with no priority at all */
 	while (1) {
-		tick_nohz_idle_enter();
-		rcu_idle_enter();
+		tick_nohz_stop_sched_tick(1);
 		while (!need_resched()) {
 
 			check_pgt_cache();
@@ -113,12 +112,7 @@ void cpu_idle(void)
 			pm_idle();
 			start_critical_timings();
 		}
-<<<<<<< HEAD
 		tick_nohz_restart_sched_tick();
-=======
-		rcu_idle_exit();
-		tick_nohz_idle_exit();
->>>>>>> 1268fbc... nohz: Remove tick_nohz_idle_enter_norcu() / tick_nohz_idle_exit_norcu()
 		preempt_enable_no_resched();
 		schedule();
 		preempt_disable();
@@ -251,7 +245,6 @@ start_thread(struct pt_regs *regs, unsigned long new_ip, unsigned long new_sp)
 {
 	set_user_gs(regs, 0);
 	regs->fs		= 0;
-	set_fs(USER_DS);
 	regs->ds		= __USER_DS;
 	regs->es		= __USER_DS;
 	regs->ss		= __USER_DS;
