@@ -1,149 +1,181 @@
-diff --git a/arch/arm/kernel/smp_twd.c b/arch/arm/kernel/smp_twd.c
-index a8a6682..92dbd80 100644
---- a/arch/arm/kernel/smp_twd.c
-+++ b/arch/arm/kernel/smp_twd.c
-@@ -10,13 +10,17 @@
-  */
- #include <linux/init.h>
- #include <linux/kernel.h>
-+#include <linux/clk.h>
-+#include <linux/cpufreq.h>
- #include <linux/delay.h>
- #include <linux/device.h>
-+#include <linux/err.h>
- #include <linux/smp.h>
- #include <linux/jiffies.h>
- #include <linux/clockchips.h>
- #include <linux/irq.h>
- #include <linux/io.h>
-+#include <linux/percpu.h>
- 
- #include <asm/smp_twd.h>
- #include <asm/localtimer.h>
-@@ -25,7 +29,9 @@
- /* set up by the platform code */
- void __iomem *twd_base;
- 
-+static struct clk *twd_clk;
- static unsigned long twd_timer_rate;
-+static DEFINE_PER_CPU(struct clock_event_device *, twd_ce);
- 
- static struct clock_event_device __percpu **twd_evt;
- 
-@@ -89,6 +95,52 @@ void twd_timer_stop(struct clock_event_device *clk)
- 	disable_percpu_irq(clk->irq);
- }
- 
-+#ifdef CONFIG_CPU_FREQ
+diff --git a/Documentation/sysctl/vm.txt b/Documentation/sysctl/vm.txt
+index 078701f..5d12bbd 100644
+--- a/Documentation/sysctl/vm.txt
++++ b/Documentation/sysctl/vm.txt
+@@ -28,6 +28,7 @@ Currently, these files are in /proc/sys/vm:
+ - dirty_writeback_centisecs
+ - drop_caches
+ - extfrag_threshold
++- extra_free_kbytes
+ - hugepages_treat_as_movable
+ - hugetlb_shm_group
+ - laptop_mode
+@@ -167,6 +168,21 @@ fragmentation index is <= extfrag_threshold. The default value is 500.
+
+ ==============================================================
+
++extra_free_kbytes
 +
++This parameter tells the VM to keep extra free memory between the threshold
++where background reclaim (kswapd) kicks in, and the threshold where direct
++reclaim (by allocating processes) kicks in.
++
++This is useful for workloads that require low latency memory allocations
++and have a bounded burstiness in memory allocations, for example a
++realtime application that receives and transmits network traffic
++(causing in-kernel memory allocations) with a maximum total message burst
++size of 200MB may need 200MB of extra free memory to avoid direct reclaim
++related latencies.
++
++==============================================================
++
+ hugepages_treat_as_movable
+
+ This parameter is only useful when kernelcore= is specified at boot time to
+diff --git a/include/linux/mmzone.h b/include/linux/mmzone.h
+index 73b64a3..7f8f883 100644
+--- a/include/linux/mmzone.h
++++ b/include/linux/mmzone.h
+@@ -881,7 +881,7 @@ static inline int is_dma(struct zone *zone)
+
+ /* These two functions are used to setup the per zone pages min values */
+ struct ctl_table;
+-int min_free_kbytes_sysctl_handler(struct ctl_table *, int,
++int free_kbytes_sysctl_handler(struct ctl_table *, int,
+ 					void __user *, size_t *, loff_t *);
+ extern int sysctl_lowmem_reserve_ratio[MAX_NR_ZONES-1];
+ int lowmem_reserve_ratio_sysctl_handler(struct ctl_table *, int,
+diff --git a/include/linux/swap.h b/include/linux/swap.h
+index 68df9c1..66a12c4 100644
+--- a/include/linux/swap.h
++++ b/include/linux/swap.h
+@@ -215,6 +215,8 @@ struct swap_list_t {
+ /* linux/mm/page_alloc.c */
+ extern unsigned long totalram_pages;
+ extern unsigned long totalreserve_pages;
++extern int min_free_kbytes;
++extern int extra_free_kbytes;
+ extern unsigned long dirty_balance_reserve;
+ extern unsigned int nr_free_buffer_pages(void);
+ extern unsigned int nr_free_pagecache_pages(void);
+diff --git a/kernel/sysctl.c b/kernel/sysctl.c
+index c88878d..102e9a1 100644
+--- a/kernel/sysctl.c
++++ b/kernel/sysctl.c
+@@ -104,7 +104,6 @@ extern char core_pattern[];
+ extern unsigned int core_pipe_limit;
+ #endif
+ extern int pid_max;
+-extern int min_free_kbytes;
+ extern int pid_max_min, pid_max_max;
+ extern int sysctl_drop_caches;
+ extern int percpu_pagelist_fraction;
+@@ -1246,10 +1245,18 @@ static struct ctl_table vm_table[] = {
+ 		.data		= &min_free_kbytes,
+ 		.maxlen		= sizeof(min_free_kbytes),
+ 		.mode		= 0644,
+-		.proc_handler	= min_free_kbytes_sysctl_handler,
++		.proc_handler	= free_kbytes_sysctl_handler,
+ 		.extra1		= &zero,
+ 	},
+ 	{
++		.procname   = "extra_free_kbytes",
++		.data       = &extra_free_kbytes,
++		.maxlen     = sizeof(extra_free_kbytes),
++		.mode       = 0644,
++		.proc_handler   = free_kbytes_sysctl_handler,
++		.extra1     = &zero,
++	},
++	{
+ 		.procname	= "percpu_pagelist_fraction",
+ 		.data		= &percpu_pagelist_fraction,
+ 		.maxlen		= sizeof(percpu_pagelist_fraction),
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index 9673d96..5380d84 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -194,8 +194,21 @@ static char * const zone_names[MAX_NR_ZONES] = {
+ 	 "Movable",
+ };
+
 +/*
-+ * Updates clockevent frequency when the cpu frequency changes.
-+ * Called on the cpu that is changing frequency with interrupts disabled.
++ * Try to keep at least this much lowmem free.  Do not allow normal
++ * allocations below this point, only high priority ones. Automatically
++ * tuned according to the amount of memory in the system.
 + */
-+static void twd_update_frequency(void *data)
-+{
-+	twd_timer_rate = clk_get_rate(twd_clk);
+ int min_free_kbytes = 1024;
+
++/*
++ * Extra memory for the system to try freeing between the min and
++ * low watermarks.  Useful for workloads that require low latency
++ * memory allocations in bursts larger than the normal gap between
++ * low and min.
++ */
++int extra_free_kbytes;
 +
-+	clockevents_update_freq(__get_cpu_var(twd_ce), twd_timer_rate);
-+}
-+
-+static int twd_cpufreq_transition(struct notifier_block *nb,
-+	unsigned long state, void *data)
-+{
-+	struct cpufreq_freqs *freqs = data;
-+
-+	/*
-+	 * The twd clock events must be reprogrammed to account for the new
-+	 * frequency.  The timer is local to a cpu, so cross-call to the
-+	 * changing cpu.
-+	 */
-+	if (state == CPUFREQ_POSTCHANGE || state == CPUFREQ_RESUMECHANGE)
-+		smp_call_function_single(freqs->cpu, twd_update_frequency,
-+			NULL, 1);
-+
-+	return NOTIFY_OK;
-+}
-+
-+static struct notifier_block twd_cpufreq_nb = {
-+	.notifier_call = twd_cpufreq_transition,
-+};
-+
-+static int twd_cpufreq_init(void)
-+{
-+	if (!IS_ERR_OR_NULL(twd_clk))
-+		return cpufreq_register_notifier(&twd_cpufreq_nb,
-+			CPUFREQ_TRANSITION_NOTIFIER);
-+
-+	return 0;
-+}
-+core_initcall(twd_cpufreq_init);
-+
-+#endif
-+
- static void __cpuinit twd_calibrate_rate(void)
+ static unsigned long __meminitdata nr_kernel_pages;
+ static unsigned long __meminitdata nr_all_pages;
+ static unsigned long __meminitdata dma_reserve;
+@@ -5217,6 +5230,7 @@ static void setup_per_zone_lowmem_reserve(void)
+ static void __setup_per_zone_wmarks(void)
  {
- 	unsigned long count;
-@@ -140,6 +192,27 @@ static irqreturn_t twd_handler(int irq, void *dev_id)
- 	return IRQ_NONE;
- }
- 
-+static struct clk *twd_get_clock(void)
-+{
-+	struct clk *clk;
-+	int err;
-+
-+	clk = clk_get_sys("smp_twd", NULL);
-+	if (IS_ERR(clk)) {
-+		pr_err("smp_twd: clock not found: %d\n", (int)PTR_ERR(clk));
-+		return clk;
-+	}
-+
-+	err = clk_enable(clk);
-+	if (err) {
-+		pr_err("smp_twd: clock failed to enable: %d\n", err);
-+		clk_put(clk);
-+		return ERR_PTR(err);
-+	}
-+
-+	return clk;
-+}
-+
- /*
-  * Setup the local clock events for a CPU.
-  */
-@@ -165,7 +238,13 @@ void __cpuinit twd_timer_setup(struct clock_event_device *clk)
- 		}
+ 	unsigned long pages_min = min_free_kbytes >> (PAGE_SHIFT - 10);
++	unsigned long pages_low = extra_free_kbytes >> (PAGE_SHIFT - 10);
+ 	unsigned long lowmem_pages = 0;
+ 	struct zone *zone;
+ 	unsigned long flags;
+@@ -5228,11 +5242,14 @@ static void __setup_per_zone_wmarks(void)
  	}
- 
--	twd_calibrate_rate();
-+	if (!twd_clk)
-+		twd_clk = twd_get_clock();
+
+ 	for_each_zone(zone) {
+-		u64 tmp;
++		u64 min, low;
+
+ 		spin_lock_irqsave(&zone->lock, flags);
+-		tmp = (u64)pages_min * zone->present_pages;
+-		do_div(tmp, lowmem_pages);
++		min = (u64)pages_min * zone->present_pages;
++		do_div(min, lowmem_pages);
++		low = (u64)pages_low * zone->present_pages;
++		do_div(low, vm_total_pages);
 +
-+	if (!IS_ERR_OR_NULL(twd_clk))
-+		twd_timer_rate = clk_get_rate(twd_clk);
-+	else
-+		twd_calibrate_rate();
- 
- 	clk->name = "local_timer";
- 	clk->features = CLOCK_EVT_FEAT_PERIODIC | CLOCK_EVT_FEAT_ONESHOT |
-@@ -173,15 +252,13 @@ void __cpuinit twd_timer_setup(struct clock_event_device *clk)
- 	clk->rating = 350;
- 	clk->set_mode = twd_set_mode;
- 	clk->set_next_event = twd_set_next_event;
--	clk->shift = 20;
--	clk->mult = div_sc(twd_timer_rate, NSEC_PER_SEC, clk->shift);
--	clk->max_delta_ns = clockevent_delta2ns(0xffffffff, clk);
--	clk->min_delta_ns = clockevent_delta2ns(0xf, clk);
- 
- 	this_cpu_clk = __this_cpu_ptr(twd_evt);
- 	*this_cpu_clk = clk;
- 
--	clockevents_register_device(clk);
-+	__get_cpu_var(twd_ce) = clk;
- 
-+	clockevents_config_and_register(clk, twd_timer_rate,
-+					0xf, 0xffffffff);
- 	enable_percpu_irq(clk->irq, 0);
- }
+ 		if (is_highmem(zone)) {
+ 			/*
+ 			 * __GFP_HIGH and PF_MEMALLOC allocations usually don't
+@@ -5256,11 +5273,13 @@ static void __setup_per_zone_wmarks(void)
+ 			 * If it's a lowmem zone, reserve a number of pages
+ 			 * proportionate to the zone's size.
+ 			 */
+-			zone->watermark[WMARK_MIN] = tmp;
++			zone->watermark[WMARK_MIN] = min;
+ 		}
+
+-		zone->watermark[WMARK_LOW]  = min_wmark_pages(zone) + (tmp >> 2);
+-		zone->watermark[WMARK_HIGH] = min_wmark_pages(zone) + (tmp >> 1);
++		zone->watermark[WMARK_LOW]  = min_wmark_pages(zone) +
++					low + (min >> 2);
++		zone->watermark[WMARK_HIGH] = min_wmark_pages(zone) +
++					low + (min >> 1);
+
+ 		setup_zone_migrate_reserve(zone);
+ 		spin_unlock_irqrestore(&zone->lock, flags);
+@@ -5371,11 +5390,11 @@ int __meminit init_per_zone_wmark_min(void)
+ module_init(init_per_zone_wmark_min)
+
+ /*
+- * min_free_kbytes_sysctl_handler - just a wrapper around proc_dointvec() so
+- *	that we can call two helper functions whenever min_free_kbytes
+- *	changes.
++ * free_kbytes_sysctl_handler - just a wrapper around proc_dointvec() so
++ * that we can call two helper functions whenever min_free_kbytes
++ * or extra_free_kbytes changes.
+  */
+-int min_free_kbytes_sysctl_handler(ctl_table *table, int write,
++int free_kbytes_sysctl_handler(ctl_table *table, int write,
+ 	void __user *buffer, size_t *length, loff_t *ppos)
+ {
+ 	proc_dointvec(table, write, buffer, length, ppos);
 -- 
-1.7.5.4
+1.7.4.1
+
+  
