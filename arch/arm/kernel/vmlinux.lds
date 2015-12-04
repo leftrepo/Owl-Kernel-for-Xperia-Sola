@@ -338,17 +338,6 @@
  * published by the Free Software Foundation.
  */
 /*
- * Copyright (C) 2009 ST-Ericsson
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- */
-/*
- * Physical DRAM offset.
- */
-/*
  * Allow for constants defined here to be used from assembly code
  * by prepending the UL suffix only with actual C code compilation.
  */
@@ -435,6 +424,7 @@ SECTIONS
    . = ALIGN(8); __sched_text_start = .; *(.sched.text) __sched_text_end = .;
    . = ALIGN(8); __lock_text_start = .; *(.spinlock.text) __lock_text_end = .;
    . = ALIGN(8); __kprobes_text_start = .; *(.kprobes.text) __kprobes_text_end = .;
+   . = ALIGN(8); __idmap_text_start = .; *(.idmap.text) __idmap_text_end = .;
    *(.fixup)
    *(.gnu.warning)
    *(.glue_7)
@@ -496,6 +486,7 @@ SECTIONS
   __security_initcall_start = .; *(.security_initcall.init) __security_initcall_end = .;
   . = ALIGN(4); __initramfs_start = .; *(.init.ramfs) . = ALIGN(8); *(.init.ramfs.info)
  }
+ __init_data = .;
  .exit.data : {
   *(.exit.data) *(.memexit.data) *(.memexit.rodata)
  }
