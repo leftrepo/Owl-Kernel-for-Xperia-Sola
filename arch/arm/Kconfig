@@ -885,6 +885,7 @@ config ARCH_U8500
 	select ARCH_HAS_CPUFREQ
 	select NOMADIK_GPIO
 	select ARM_HAS_SG_CHAIN
+	select HAVE_DMA_CONTIGUOUS
 	select ARCH_HAS_PASR
 	help
 	  Support for ST-Ericsson's Ux500 architecture
