@@ -238,7 +238,7 @@ static int gic_suspend(void)
 	return 0;
 }
 
-extern int msm_show_resume_irq_mask;
+//extern int msm_show_resume_irq_mask;
 
 static void gic_show_resume_irq(struct gic_chip_data *gic)
 {
@@ -247,8 +247,8 @@ static void gic_show_resume_irq(struct gic_chip_data *gic)
 	unsigned long pending[32];
 	void __iomem *base = gic_data_dist_base(gic);
 
-	if (!msm_show_resume_irq_mask)
-		return;
+	//if (!msm_show_resume_irq_mask)
+		//return;
 
 	raw_spin_lock(&irq_controller_lock);
 	for (i = 0; i * 32 < gic->max_irq; i++) {
