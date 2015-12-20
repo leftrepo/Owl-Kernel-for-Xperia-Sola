@@ -25,6 +25,7 @@
 #include <linux/bug.h>
 #include <linux/export.h>
 #include <linux/memcopy.h>
+#include <linux/errno.h>
 
 #ifndef __HAVE_ARCH_STRNICMP
 /**

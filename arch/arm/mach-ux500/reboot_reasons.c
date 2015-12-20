@@ -11,6 +11,7 @@
 
 #include <linux/kernel.h>
 #include <linux/string.h>
+#include <linux/bug.h>
 #include <mach/reboot_reasons.h>
 #include <mach/dbx500-reset-reasons.h>
 

@@ -9,6 +9,7 @@
 #include <linux/tee.h>
 #include <linux/io.h>
 #include <linux/errno.h>
+#include <linux/bug.h>
 
 #include <mach/hardware.h>
 

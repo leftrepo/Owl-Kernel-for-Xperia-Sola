@@ -10,6 +10,7 @@
 
 #include <linux/list.h>
 #include <plat/pincfg.h>
+#include <linux/bug.h>
 
 #define PIN_LOOKUP(_name, _pins)	\
 {					\
