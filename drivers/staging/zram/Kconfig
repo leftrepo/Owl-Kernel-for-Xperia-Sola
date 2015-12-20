@@ -1,7 +1,11 @@
 config ZRAM
 	tristate "Compressed RAM block device support"
-	depends on BLOCK && SYSFS && ZSMALLOC && CRYPTO=y
-	select CRYPTO_LZO
+	# X86 dependency is because zsmalloc uses non-portable pte/tlb
+	# functions
+	depends on BLOCK && SYSFS && X86
+	select ZSMALLOC
+	select LZO_COMPRESS
+	select LZO_DECOMPRESS
 	default n
 	help
 	  Creates virtual block devices called /dev/zramX (X = 0, 1, ...).
@@ -16,34 +20,9 @@ config ZRAM
 	  Project home: http://compcache.googlecode.com/
 
 config ZRAM_DEBUG
-        bool "Compressed RAM block device debug support"
-        depends on ZRAM
-        default n
-        help
-          This option adds additional debugging code to the compressed
-          RAM block device driver.
-
-choice ZRAM_COMPRESS
-	prompt "compression method"
+	bool "Compressed RAM block device debug support"
 	depends on ZRAM
-	default ZRAM_LZO
+	default n
 	help
-	  Select the compression method used by zram.
-	  LZO is the default. Snappy compresses a bit worse (around ~2%) but
-	  much (~2x) faster, at least on x86-64.
-config ZRAM_LZO
-	bool "LZO compression"
-	select CRYPTO_LZO
-config ZRAM_LZ4
-	bool "LZ4 compression"
-	select CRYPTO_LZ4
-	select CRYPTO_LZ4HC
-endchoice
-
-config ZRAM_DEFAULT_DISKSIZE
-	int "Default size of zram in bytes"
-	depends on ZRAM
-	default 100663296
-	help
-	  Set default zram disk size (default ~ 96MB)
-
+	  This option adds additional debugging code to the compressed
+	  RAM block device driver.
