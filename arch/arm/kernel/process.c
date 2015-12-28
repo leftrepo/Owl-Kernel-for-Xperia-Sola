@@ -30,6 +30,7 @@
 #include <linux/uaccess.h>
 #include <linux/random.h>
 #include <linux/hw_breakpoint.h>
+#include <linux/cpuidle.h>
 #include <linux/console.h>
 
 #include <asm/cacheflush.h>
@@ -278,7 +279,8 @@ void cpu_idle(void)
 				cpu_relax();
 			} else if (!need_resched()) {
 				stop_critical_timings();
-				pm_idle();
+				if (cpuidle_idle_call())
+					pm_idle();
 				start_critical_timings();
 				/*
 				 * pm_idle functions must always
@@ -307,6 +309,7 @@ __setup("reboot=", reboot_setup);
 
 void machine_shutdown(void)
 {
+	preempt_disable();
 #ifdef CONFIG_SMP
 	smp_send_stop();
 #endif
@@ -328,6 +331,10 @@ void machine_power_off(void)
 void machine_restart(char *cmd)
 {
 	machine_shutdown();
+
+	/* Flush the console to make sure all the relevant messages make it
+	 * out to the console drivers */
+	arm_machine_flush_console();
 
 	arm_pm_restart(reboot_mode, cmd);
 
