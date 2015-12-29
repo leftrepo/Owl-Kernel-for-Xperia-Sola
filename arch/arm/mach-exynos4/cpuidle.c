@@ -16,7 +16,7 @@
 #include <asm/proc-fns.h>
 
 static int exynos4_enter_idle(struct cpuidle_device *dev,
-			      int index);
+			      struct cpuidle_state *state);
 
 static struct cpuidle_state exynos4_cpuidle_set[] = {
 	[0] = {
@@ -37,7 +37,7 @@ static struct cpuidle_driver exynos4_idle_driver = {
 };
 
 static int exynos4_enter_idle(struct cpuidle_device *dev,
-			      int index)
+			      struct cpuidle_state *state)
 {
 	struct timeval before, after;
 	int idle_time;
@@ -52,8 +52,7 @@ static int exynos4_enter_idle(struct cpuidle_device *dev,
 	idle_time = (after.tv_sec - before.tv_sec) * USEC_PER_SEC +
 		    (after.tv_usec - before.tv_usec);
 
-	dev->last_residency = idle_time;
-	return index;
+	return idle_time;
 }
 
 static int __init exynos4_init_cpuidle(void)
