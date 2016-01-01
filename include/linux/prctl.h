@@ -106,7 +106,7 @@
  * Get effective timerslack value for the process.
  * It can be higher than PR_GET_TIMERSLACK.
  */
-#define PR_GET_EFFECTIVE_TIMERSLACK 36
+#define PR_GET_EFFECTIVE_TIMERSLACK 38
 
 /*
  * Tune up process memory map specifics.

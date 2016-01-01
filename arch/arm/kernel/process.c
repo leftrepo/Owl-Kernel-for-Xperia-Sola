@@ -278,7 +278,8 @@ void cpu_idle(void)
 				cpu_relax();
 			} else if (!need_resched()) {
 				stop_critical_timings();
-				pm_idle();
+				if (cpuidle_idle_call())
+					pm_idle();
 				start_critical_timings();
 				/*
 				 * pm_idle functions must always

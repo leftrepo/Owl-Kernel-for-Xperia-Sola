@@ -1275,7 +1275,7 @@ static int init_dss_context(struct dss_context *dss_ctx,
 	mutex_init(&dss_ctx->cache_ctx.janitor_lock);
 	dss_ctx->cache_ctx.janitor_thread = create_workqueue(wq_name);
 	if (!dss_ctx->cache_ctx.janitor_thread) {
-		mutex_destroy(&dss_ctx.cache_ctx.janitor_lock);
+		mutex_destroy(&dss_ctx->cache_ctx.janitor_lock);
 		return -ENOMEM;
 	}
 
