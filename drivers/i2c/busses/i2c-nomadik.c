@@ -643,17 +643,11 @@ static int nmk_i2c_xfer(struct i2c_adapter *i2c_adap,
 
 	dev->busy = true;
 
-	/* Ugly fix to enable level shifter which connects
-	 * so340010 device with i2c bus: to keep bus alive
-	 * level shifter can be triggered only when there is no
-	 * any activity on a bus and only for this device
-	 */
-	if (msgs->addr == 0x2c) {
-		gpio_set_value(209, 1);
-		udelay(10);
-	}
-
+	if (dev->regulator)
+		regulator_enable(dev->regulator);
 	pm_runtime_get_sync(&dev->pdev->dev);
+
+	clk_enable(dev->clk);
 
 	status = init_hw(dev);
 	if (status)
@@ -680,13 +674,10 @@ static int nmk_i2c_xfer(struct i2c_adapter *i2c_adap,
 	}
 
 out:
-
-	/* bootom half of ugly fix described above */
-	if (msgs->addr == 0x2c) {
-		gpio_set_value(209, 0);
-		udelay(10);
-	}
-	pm_runtime_put(&dev->pdev->dev);
+	clk_disable(dev->clk);
+	pm_runtime_put_sync(&dev->pdev->dev);
+	if (dev->regulator)
+		regulator_disable(dev->regulator);
 
 	dev->busy = false;
 
@@ -876,9 +867,9 @@ static irqreturn_t i2c_irq_handler(int irq, void *arg)
 
 
 #ifdef CONFIG_PM
-
-static int nmk_i2c_suspend(struct platform_device *pdev, pm_message_t state)
+static int nmk_i2c_suspend(struct device *dev)
 {
+	struct platform_device *pdev = to_platform_device(dev);
 	struct nmk_i2c_dev *nmk_i2c = platform_get_drvdata(pdev);
 
 	if (nmk_i2c->busy)
@@ -887,20 +878,13 @@ static int nmk_i2c_suspend(struct platform_device *pdev, pm_message_t state)
 	return 0;
 }
 
-static int nmk_i2c_suspend_noirq(struct device *dev)
+static int nmk_i2c_resume(struct device *dev)
 {
-	struct nmk_i2c_dev *nmk_i2c =
-		platform_get_drvdata(to_platform_device(dev));
-
-	if (nmk_i2c->busy)
-		return -EBUSY;
-
 	return 0;
 }
-
 #else
 #define nmk_i2c_suspend	NULL
-#define nmk_i2c_suspend_noirq NULL
+#define nmk_i2c_resume	NULL
 #endif
 
 static int nmk_i2c_runtime_suspend(struct device *dev)
@@ -933,7 +917,8 @@ static int nmk_i2c_runtime_resume(struct device *dev)
 static const struct dev_pm_ops nmk_i2c_pm = {
 	SET_RUNTIME_PM_OPS(nmk_i2c_runtime_suspend, nmk_i2c_runtime_resume,
 			   NULL)
-	.suspend_noirq	= nmk_i2c_suspend_noirq,
+	.suspend_noirq	= nmk_i2c_suspend,
+	.resume_noirq	= nmk_i2c_resume,
 };
 
 static unsigned int nmk_i2c_functionality(struct i2c_adapter *adap)
@@ -1094,7 +1079,6 @@ static struct platform_driver nmk_i2c_driver = {
 	},
 	.probe = nmk_i2c_probe,
 	.remove = __devexit_p(nmk_i2c_remove),
-	.suspend = nmk_i2c_suspend,
 };
 
 static int __init nmk_i2c_init(void)

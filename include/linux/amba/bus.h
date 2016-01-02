@@ -136,16 +136,12 @@ extern int amba_pm_restore_noirq(struct device *dev);
 
 #ifdef CONFIG_PM_SLEEP
 #define USE_AMBA_PM_SLEEP_OPS \
-	.prepare = amba_pm_prepare, \
-	.complete = amba_pm_complete, \
 	.suspend = amba_pm_suspend, \
 	.resume = amba_pm_resume, \
 	.freeze = amba_pm_freeze, \
 	.thaw = amba_pm_thaw, \
 	.poweroff = amba_pm_poweroff, \
 	.restore = amba_pm_restore, \
-	.suspend_noirq = amba_pm_suspend_noirq, \
-	.resume_noirq = amba_pm_resume_noirq, \
 	.freeze_noirq = amba_pm_freeze_noirq, \
 	.thaw_noirq = amba_pm_thaw_noirq, \
 	.poweroff_noirq = amba_pm_poweroff_noirq, \
