@@ -78,6 +78,7 @@ int pm_clk_add(struct device *dev, const char *con_id)
 			return -ENOMEM;
 		}
 	}
+
 	pm_clk_acquire(dev, ce);
 
 	spin_lock_irq(&psd->lock);

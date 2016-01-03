@@ -342,7 +342,7 @@ void genpd_queue_power_off_work(struct generic_pm_domain *genpd)
 static int pm_genpd_poweroff(struct generic_pm_domain *genpd)
 	__releases(&genpd->lock) __acquires(&genpd->lock)
 {
-	struct dev_list_entry *pdd;
+	struct pm_domain_data *pdd;
 	struct gpd_link *link;
 	unsigned int not_suspended;
 	int ret = 0;
@@ -389,7 +389,7 @@ static int pm_genpd_poweroff(struct generic_pm_domain *genpd)
 	genpd->status = GPD_STATE_BUSY;
 	genpd->poweroff_task = current;
 
-	list_for_each_entry_reverse(pdd, &genpd->dev_list, node) {
+	list_for_each_entry_reverse(pdd, &genpd->dev_list, list_node) {
 		ret = atomic_read(&genpd->sd_count) == 0 ?
 			__pm_genpd_save_device(pdd, genpd) : -EBUSY;
 
