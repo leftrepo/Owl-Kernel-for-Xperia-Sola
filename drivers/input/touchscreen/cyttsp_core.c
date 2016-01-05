@@ -1486,7 +1486,6 @@ static int cyttsp_set_operational_mode(struct cyttsp *ts)
 	if (rc)
 		return rc;
 	msleep(CYTTSP_SCAN_PERIOD);
-success:
 	schedule_delayed_work(&ts->work, ESD_CHECK_INTERVAL);
 	if (ts->platform_data->use_charger_mode ||
 			ts->platform_data->use_configure_sensitivity)

@@ -12,6 +12,7 @@
 
 #include <linux/err.h>
 #include <linux/slab.h>
+#include <linux/stat.h>
 
 #include <linux/mmc/host.h>
 #include <linux/mmc/card.h>
@@ -23,10 +24,6 @@
 #include "mmc_ops.h"
 #include "sd.h"
 #include "sd_ops.h"
-
-#ifdef CONFIG_MMC_SD_CHECK_BOOT_SIGNATURE
-#include "sd_check_mbr.h"
-#endif
 
 static const unsigned int tran_exp[] = {
 	10000,		100000,		1000000,	10000000,
@@ -312,9 +309,6 @@ static int mmc_read_switch(struct mmc_card *card)
 
 	if (status[13] & SD_MODE_HIGH_SPEED)
 		card->sw_caps.hs_max_dtr = HIGH_SPEED_MAX_DTR;
-
-	if (status[13] & UHS_SDR50_BUS_SPEED)
-		card->sw_caps.hs_max_dtr = 50000000;
 
 	if (card->scr.sda_spec3) {
 		card->sw_caps.sd3_bus_mode = status[13];
@@ -739,9 +733,7 @@ int mmc_sd_get_cid(struct mmc_host *host, u32 ocr, u32 *cid, u32 *rocr)
 	 * state.  We wait 1ms to give cards time to
 	 * respond.
 	 */
-	err = mmc_go_idle(host);
-	if (err)
-		return err;
+	mmc_go_idle(host);
 
 	/*
 	 * If SD_SEND_IF_COND indicates an SD 2.0
@@ -1060,7 +1052,10 @@ static void mmc_sd_remove(struct mmc_host *host)
 	BUG_ON(!host->card);
 
 	mmc_remove_card(host->card);
+
+	mmc_claim_host(host);
 	host->card = NULL;
+	mmc_release_host(host);
 }
 
 /*
@@ -1091,7 +1086,7 @@ static void mmc_sd_detect(struct mmc_host *host)
 	 */
 #ifdef CONFIG_MMC_PARANOID_SD_INIT
 	while(retries) {
-		err = _mmc_detect_card_removed(host);
+		err = mmc_send_status(host->card, NULL);
 		if (err) {
 			retries--;
 			udelay(5);
@@ -1160,8 +1155,11 @@ static int mmc_sd_resume(struct mmc_host *host)
 		if (err) {
 			printk(KERN_ERR "%s: Re-init card rc = %d (retries = %d)\n",
 			       mmc_hostname(host), err, retries);
-			mdelay(5);
 			retries--;
+			mmc_power_off(host);
+			usleep_range(5000, 5500);
+			mmc_power_up(host);
+			mmc_select_voltage(host, host->ocr);
 			continue;
 		}
 		break;
@@ -1293,6 +1291,10 @@ int mmc_attach_sd(struct mmc_host *host)
 		err = mmc_sd_init_card(host, host->ocr, NULL);
 		if (err) {
 			retries--;
+			mmc_power_off(host);
+			usleep_range(5000, 5500);
+			mmc_power_up(host);
+			mmc_select_voltage(host, host->ocr);
 			continue;
 		}
 		break;
@@ -1307,13 +1309,6 @@ int mmc_attach_sd(struct mmc_host *host)
 	err = mmc_sd_init_card(host, host->ocr, NULL);
 	if (err)
 		goto err;
-#endif
-
-#ifdef CONFIG_MMC_SD_CHECK_BOOT_SIGNATURE
-	if (mmc_sd_check_boot_signature(host->card)) {
-		err = -EFAULT;
-		goto err;
-	}
 #endif
 
 	mmc_release_host(host);
