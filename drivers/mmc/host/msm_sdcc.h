@@ -2,7 +2,7 @@
  *  linux/drivers/mmc/host/msmsdcc.h - QCT MSM7K SDC Controller
  *
  *  Copyright (C) 2008 Google, All Rights Reserved.
- *  Copyright (c) 2009-2012, The Linux Foundation. All rights reserved.
+ *  Copyright (c) 2009-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -25,7 +25,6 @@
 #include <linux/scatterlist.h>
 #include <linux/dma-mapping.h>
 #include <linux/wakelock.h>
-#include <linux/earlysuspend.h>
 #include <linux/pm_qos.h>
 #include <mach/sps.h>
 
@@ -193,6 +192,13 @@
 
 #define MCI_TEST_INPUT		0x0D4
 
+#define MCI_TESTBUS_CONFIG	0x0CC
+#define MCI_TESTBUS_SEL_MASK	(0x7)
+#define MAX_TESTBUS		8
+#define MCI_TESTBUS_ENA		(1 << 3)
+
+#define MCI_SDCC_DEBUG_REG	0x124
+
 #define MCI_IRQENABLE	\
 	(MCI_CMDCRCFAILMASK|MCI_DATACRCFAILMASK|MCI_CMDTIMEOUTMASK|	\
 	MCI_DATATIMEOUTMASK|MCI_TXUNDERRUNMASK|MCI_RXOVERRUNMASK|	\
@@ -321,8 +327,7 @@ struct msmsdcc_sps_data {
 	unsigned int			dest_pipe_index;
 	unsigned int			busy;
 	unsigned int			xfer_req_cnt;
-	bool				pipe_reset_pending;
-	bool				reset_device;
+	bool				reset_bam;
 	struct tasklet_struct		tlet;
 };
 
@@ -347,7 +352,7 @@ struct msmsdcc_host {
 	void __iomem		*dml_base;
 	void __iomem		*bam_base;
 
-	int			pdev_id;
+	struct platform_device	*pdev;
 
 	struct msmsdcc_curr_req	curr;
 
@@ -375,11 +380,6 @@ struct msmsdcc_host {
 	struct msmsdcc_sps_data sps;
 	struct msmsdcc_pio_data	pio;
 
-#ifdef CONFIG_HAS_EARLYSUSPEND
-	struct early_suspend early_suspend;
-	int polling_enabled;
-#endif
-
 	struct tasklet_struct 	dma_tlet;
 
 	unsigned int prog_enable;
@@ -402,6 +402,7 @@ struct msmsdcc_host {
 	bool io_pad_pwr_switch;
 	bool tuning_in_progress;
 	bool tuning_needed;
+	bool tuning_done;
 	bool en_auto_cmd19;
 	bool en_auto_cmd21;
 	bool sdio_gpio_lpm;
@@ -415,7 +416,6 @@ struct msmsdcc_host {
 	struct mutex clk_mutex;
 	bool pending_resume;
 	unsigned int idle_tout;			/* Timeout in msecs */
-	bool pending_dpsm_reset;
 	bool enforce_pio_mode;
 	bool print_pm_stats;
 	struct msmsdcc_msm_bus_vote msm_bus_vote;
@@ -428,6 +428,7 @@ struct msmsdcc_host {
 	struct dentry *debugfs_idle_tout;
 	struct dentry *debugfs_pio_mode;
 	struct dentry *debugfs_pm_stats;
+	int saved_tuning_phase;
 };
 
 #define MSMSDCC_VERSION_STEP_MASK	0x0000FFFF
@@ -446,6 +447,9 @@ struct msmsdcc_host {
 #define MSMSDCC_IO_PAD_PWR_SWITCH	(1 << 8)
 #define MSMSDCC_AUTO_CMD19	(1 << 9)
 #define MSMSDCC_AUTO_CMD21	(1 << 10)
+#define MSMSDCC_SW_RST_CFG_BROKEN	(1 << 11)
+#define MSMSDCC_DATA_PEND_FOR_CMD53	(1 << 12)
+#define MSMSDCC_TESTBUS_DEBUG		(1 << 13)
 
 #define set_hw_caps(h, val)		((h)->hw_caps |= val)
 #define is_sps_mode(h)			((h)->hw_caps & MSMSDCC_SPS_BAM_SUP)
@@ -459,6 +463,10 @@ struct msmsdcc_host {
 #define is_io_pad_pwr_switch(h)	((h)->hw_caps & MSMSDCC_IO_PAD_PWR_SWITCH)
 #define is_auto_cmd19(h)		((h)->hw_caps & MSMSDCC_AUTO_CMD19)
 #define is_auto_cmd21(h)		((h)->hw_caps & MSMSDCC_AUTO_CMD21)
+#define is_sw_reset_save_config_broken(h) \
+				((h)->hw_caps & MSMSDCC_SW_RST_CFG_BROKEN)
+#define is_data_pend_for_cmd53(h) ((h)->hw_caps & MSMSDCC_DATA_PEND_FOR_CMD53)
+#define is_testbus_debug(h) ((h)->hw_caps & MSMSDCC_TESTBUS_DEBUG)
 
 /* Set controller capabilities based on version */
 static inline void set_default_hw_caps(struct msmsdcc_host *host)
@@ -486,11 +494,20 @@ static inline void set_default_hw_caps(struct msmsdcc_host *host)
 			| MSMSDCC_WAIT_FOR_TX_RX | MSMSDCC_IO_PAD_PWR_SWITCH
 			| MSMSDCC_AUTO_CMD19;
 
-	if ((step == 0x18) && (minor >= 3))
+	if ((step == 0x18) && (minor >= 3)) {
 		host->hw_caps |= MSMSDCC_AUTO_CMD21;
+		/* Version 0x06000018 need hard reset on errors */
+		host->hw_caps &= ~MSMSDCC_SOFT_RESET;
+	}
 
 	if (step >= 0x2b) /* SDCC v4 2.1.0 and greater */
-		host->hw_caps |= MSMSDCC_SW_RST | MSMSDCC_AUTO_CMD21;
+		host->hw_caps |= MSMSDCC_SW_RST | MSMSDCC_SW_RST_CFG |
+				 MSMSDCC_AUTO_CMD21 |
+				 MSMSDCC_DATA_PEND_FOR_CMD53 |
+				 MSMSDCC_TESTBUS_DEBUG;
+
+	if ((step == 0x2b) || (step == 0x38))
+		host->hw_caps |= MSMSDCC_SW_RST_CFG_BROKEN;
 }
 
 int msmsdcc_set_pwrsave(struct mmc_host *mmc, int pwrsave);

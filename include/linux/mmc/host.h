@@ -136,6 +136,10 @@ struct mmc_host_ops {
 	void	(*enable_preset_value)(struct mmc_host *host, bool enable);
 	int	(*select_drive_strength)(unsigned int max_dtr, int host_drv, int card_drv);
 	void	(*hw_reset)(struct mmc_host *host);
+	unsigned long (*get_max_frequency)(struct mmc_host *host);
+	unsigned long (*get_min_frequency)(struct mmc_host *host);
+	int	(*stop_request)(struct mmc_host *host);
+	unsigned int	(*get_xfer_remain)(struct mmc_host *host);
 };
 
 struct mmc_card;
@@ -149,6 +153,36 @@ struct mmc_async_req {
 	 * Returns 0 if success otherwise non zero.
 	 */
 	int (*err_check) (struct mmc_card *, struct mmc_async_req *);
+	/* Reinserts request back to the block layer */
+	void (*reinsert_req) (struct mmc_async_req *);
+	/* update what part of request is not done (packed_fail_idx) */
+	int (*update_interrupted_req) (struct mmc_card *,
+			struct mmc_async_req *);
+};
+
+/**
+ * mmc_context_info - synchronization details for mmc context
+ * @is_done_rcv		wake up reason was done request
+ * @is_new_req		wake up reason was new request
+ * @is_waiting_last_req	is true, when 1 request running on the bus and
+ *			NULL fetched as second request. MMC_BLK_NEW_REQUEST
+ *			notification will wake up mmc thread from waiting.
+ * @is_urgent		wake up reason was urgent request
+ * @is_waiting		is true, when first request is running on the bus,
+ *			second request preparation started or mmc thread is
+ *			waiting for the completion of the current request
+ *			(latter case is like @is_waiting_last_req)
+ * @wait		wait queue
+ * @lock		lock to protect data fields
+ */
+struct mmc_context_info {
+	bool			is_done_rcv;
+	bool			is_new_req;
+	bool			is_waiting_last_req;
+	bool			is_urgent;
+	bool			is_waiting;
+	wait_queue_head_t	wait;
+	spinlock_t		lock;
 };
 
 struct mmc_hotplug {
@@ -240,19 +274,17 @@ struct mmc_host {
 #define MMC_CAP2_DETECT_ON_ERR	(1 << 8)	/* On I/O err check card removal */
 #define MMC_CAP2_HC_ERASE_SZ	(1 << 9)	/* High-capacity erase size */
 
-#define MMC_CAP2_PACKED_RD	(1 << 10)	/* Allow packed read */
-#define MMC_CAP2_PACKED_WR	(1 << 11)	/* Allow packed write */
+#define MMC_CAP2_PACKED_RD	(1 << 12)	/* Allow packed read */
+#define MMC_CAP2_PACKED_WR	(1 << 13)	/* Allow packed write */
 #define MMC_CAP2_PACKED_CMD	(MMC_CAP2_PACKED_RD | \
 				 MMC_CAP2_PACKED_WR) /* Allow packed commands */
-#define MMC_CAP2_PACKED_WR_CONTROL (1 << 12) /* Allow write packing control */
+#define MMC_CAP2_PACKED_WR_CONTROL (1 << 14) /* Allow write packing control */
 
-#define MMC_CAP2_SANITIZE	(1 << 13)		/* Support Sanitize */
-#define MMC_CAP2_INIT_BKOPS	    (1 << 15)	/* Need to set BKOPS_EN */
+#define MMC_CAP2_SANITIZE	(1 << 15)		/* Support Sanitize */
+#define MMC_CAP2_INIT_BKOPS	    (1 << 16)	/* Need to set BKOPS_EN */
+#define MMC_CAP2_CLK_SCALE	(1 << 17)	/* Allow dynamic clk scaling */
+#define MMC_CAP2_STOP_REQUEST	(1 << 18)	/* Allow stop ongoing request */
 	mmc_pm_flag_t		pm_caps;	/* supported pm features */
-	unsigned int        power_notify_type;
-#define MMC_HOST_PW_NOTIFY_NONE		0
-#define MMC_HOST_PW_NOTIFY_SHORT	1
-#define MMC_HOST_PW_NOTIFY_LONG		2
 
 	int			clk_requests;	/* internal reference counter */
 	unsigned int		clk_delay;	/* number of MCI clk hold cycles */
@@ -298,6 +330,7 @@ struct mmc_host {
 
 	struct delayed_work	detect;
 	struct wake_lock	detect_wake_lock;
+	const char		*wlock_name;
 	int			detect_change;	/* card detect flag */
 	struct mmc_hotplug	hotplug;
 
@@ -326,6 +359,7 @@ struct mmc_host {
 	struct dentry		*debugfs_root;
 
 	struct mmc_async_req	*areq;		/* active async req */
+	struct mmc_context_info	context_info;	/* async synchronization info */
 
 #ifdef CONFIG_FAIL_MMC_REQUEST
 	struct fault_attr	fail_mmc_request;
@@ -354,6 +388,19 @@ struct mmc_host {
 	bool perf_enable;
 #endif
 	struct mmc_ios saved_ios;
+	struct {
+		unsigned long	busy_time_us;
+		unsigned long	window_time;
+		unsigned long	curr_freq;
+		unsigned long	polling_delay_ms;
+		unsigned int	up_threshold;
+		unsigned int	down_threshold;
+		ktime_t		start_busy;
+		bool		enable;
+		bool		initialized;
+		bool		in_progress;
+		struct delayed_work work;
+	} clk_scaling;
 	unsigned long		private[0] ____cacheline_aligned;
 };
 
@@ -464,6 +511,14 @@ static inline int mmc_host_cmd23(struct mmc_host *host)
 static inline int mmc_boot_partition_access(struct mmc_host *host)
 {
 	return !(host->caps2 & MMC_CAP2_BOOTPART_NOACC);
+}
+
+static inline int mmc_host_uhs(struct mmc_host *host)
+{
+	return host->caps &
+		(MMC_CAP_UHS_SDR12 | MMC_CAP_UHS_SDR25 |
+		 MMC_CAP_UHS_SDR50 | MMC_CAP_UHS_SDR104 |
+		 MMC_CAP_UHS_DDR50);
 }
 
 #ifdef CONFIG_MMC_CLKGATE
