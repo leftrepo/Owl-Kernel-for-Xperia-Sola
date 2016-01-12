@@ -56,7 +56,7 @@ struct fiops_data {
 };
 
 struct fiops_ioc {
-	struct io_cq *icq;
+	struct io_cq icq;
 
 	unsigned int flags;
 	struct fiops_data *fiopsd;
@@ -406,21 +406,6 @@ static struct fiops_ioc *fiops_select_ioc(struct fiops_data *fiopsd)
 				"postpone async, in_flight async %d sync %d",
 				fiopsd->in_flight[0], fiopsd->in_flight[1]);
 		return NULL;
-	}
-
-	/* Let sync request preempt async queue */
-	if (!rq_is_sync(rq) && service_tree->count > 1) {
-		struct rb_node *tmp = rb_next(&ioc->rb_node);
-		struct fiops_ioc *sync_ioc = NULL;
-		while (tmp) {
-			sync_ioc = rb_entry(tmp, struct fiops_ioc, rb_node);
-			rq = rq_entry_fifo(sync_ioc->fifo.next);
-			if (rq_is_sync(rq))
-				break;
-			tmp = rb_next(&sync_ioc->rb_node);
-		}
-		if (sync_ioc)
-			ioc = sync_ioc;
 	}
 
 	return ioc;
