@@ -300,6 +300,9 @@ struct d40_chan {
 	/* Runtime reconfiguration */
 	dma_addr_t			runtime_addr;
 	enum dma_transfer_direction	runtime_direction;
+	dma_addr_t			 src_dev_addr;
+	dma_addr_t			 dst_dev_addr;
+	struct list_head		list;
 };
 
 /**
@@ -2021,6 +2024,21 @@ _exit:
 
 }
 
+
+static u32 stedma40_residue(struct dma_chan *chan)
+{
+	struct d40_chan *d40c =
+		container_of(chan, struct d40_chan, chan);
+	u32 bytes_left;
+	unsigned long flags;
+
+	spin_lock_irqsave(&d40c->lock, flags);
+	bytes_left = d40_residue(d40c);
+	spin_unlock_irqrestore(&d40c->lock, flags);
+
+	return bytes_left;
+}
+
 static int
 d40_prep_sg_log(struct d40_chan *chan, struct d40_desc *desc,
 		struct scatterlist *sg_src, struct scatterlist *sg_dst,
@@ -2379,6 +2397,7 @@ static void __dump_descs(const char *name, struct list_head *list)
 static void __dump_channel(struct d40_chan *chan, int phychan)
 {
 	struct device *dev = chan2dev(chan);
+	struct dma_chan *dchan;
 
 	if (chan->phy_chan->num != phychan)
 		return;
@@ -2387,7 +2406,7 @@ static void __dump_channel(struct d40_chan *chan, int phychan)
 	dev_info(dev, "log_num: %d\n", chan->log_num);
 	dev_info(dev, "phy_chan->num: %d\n", chan->phy_chan->num);
 	dev_info(dev, "pending_tx: %d\n", chan->pending_tx);
-	dev_info(dev, "completed: %d\n", chan->completed);
+	dev_info(dev, "completed: %d\n", dchan->completed_cookie);
 
 	if (chan->dma_cfg.src_dev_type != -1)
 		dev_info(dev, "src_dev_addr: %#x\n", chan->src_dev_addr);
