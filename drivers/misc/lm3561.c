@@ -1034,9 +1034,10 @@ static int __devinit lm3561_probe(struct i2c_client *client,
 		goto err_init;
 	}
 	mutex_init(&data->lock);
+	pm_runtime_set_active(&client->dev);
 	pm_runtime_enable(&client->dev);
 	pm_suspend_ignore_children(&client->dev, true);
-	result = pm_runtime_get_sync(&client->dev);
+	result = pdata->power ? pdata->power(&client->dev, true) : 0;
 	if (result < 0)
 		goto err_setup;
 	result = lm3561_chip_init(data, pdata);
@@ -1053,13 +1054,12 @@ static int __devinit lm3561_probe(struct i2c_client *client,
 	}
 	pm_runtime_set_autosuspend_delay(&client->dev, autosuspend_delay_ms);
 	pm_runtime_use_autosuspend(&client->dev);
-	pm_runtime_mark_last_busy(&data->client->dev);
-	pm_runtime_put_autosuspend(&data->client->dev);
 	dev_info(&data->client->dev, "%s: loaded\n", __func__);
 	return 0;
 
 err_chip_init:
-	pm_runtime_suspend(&client->dev);
+	if (pdata->power)
+		pdata->power(&client->dev, false);
 err_setup:
 	pm_runtime_disable(&client->dev);
 	if (pdata->platform_init)
@@ -1079,8 +1079,9 @@ static int __devexit lm3561_remove(struct i2c_client *client)
 	struct lm3561_platform_data *pdata = client->dev.platform_data;
 
 	remove_sysfs_interfaces(&client->dev);
-	pm_runtime_suspend(&client->dev);
 	pm_runtime_disable(&client->dev);
+	if (pdata->power)
+		pdata->power(&client->dev, false);
 	if (pdata->platform_init)
 		pdata->platform_init(&client->dev, false);
 	kfree(data);
@@ -1140,9 +1141,15 @@ static int lm3561_resume(struct device *dev)
 exit_resume:
 	return result ? -EBUSY : 0;
 }
+static int lm3561_idle(struct device *dev)
+{
+	pm_request_autosuspend(dev);
+	return 0;
+}
 #else
 #define lm3561_suspend NULL
 #define lm3561_resume NULL
+#define lm3561_idle NULL
 #endif
 
 #ifdef CONFIG_PM_SLEEP
@@ -1151,7 +1158,16 @@ static int lm3561_suspend_sleep(struct device *dev)
 	int rc;
 	struct lm3561_drv_data *data = dev_get_drvdata(dev);
 
+	if (pm_runtime_status_suspended(dev)) {
+		dev_dbg(dev, "%s: runtime-suspended.\n", __func__);
+		return 0;
+	}
 	rc = lm3561_suspend(dev);
+	if (!rc) {
+		pm_runtime_disable(dev);
+		pm_runtime_set_suspended(dev);
+		pm_runtime_enable(dev);
+	}
 	data->on_duty = DUTY_ON_NOTHING;
 	dev_dbg(dev, "%s: suspended (%d)\n", __func__, rc);
 	return rc;
@@ -1159,14 +1175,9 @@ static int lm3561_suspend_sleep(struct device *dev)
 
 static int lm3561_resume_sleep(struct device *dev)
 {
-	int rc;
-	struct lm3561_platform_data *pdata = dev->platform_data;
-
-	if (!pm_runtime_suspended(dev)) {
-		pm_runtime_put(dev);
+	int rc = 0;
+	if (!pm_runtime_status_suspended(dev))
 		rc = lm3561_resume(dev);
-	} else
-		rc = pdata->power ? pdata->power(dev, true) : 0;
 	dev_dbg(dev, "%s: resumed (%d)\n", __func__, rc);
 	return rc;
 }
@@ -1177,7 +1188,7 @@ static int lm3561_resume_sleep(struct device *dev)
 
 static const struct dev_pm_ops lm3561_pm = {
 	 SET_SYSTEM_SLEEP_PM_OPS(lm3561_suspend_sleep, lm3561_resume_sleep)
-	 SET_RUNTIME_PM_OPS(lm3561_suspend, lm3561_resume, NULL)
+	 SET_RUNTIME_PM_OPS(lm3561_suspend, lm3561_resume, lm3561_idle)
 };
 
 static const struct i2c_device_id lm3561_id[] = {
@@ -1212,4 +1223,3 @@ module_exit(lm3561_exit);
 MODULE_AUTHOR("Angela Fox <angela.fox@sonyericsson.com>");
 MODULE_DESCRIPTION("LM3561 I2C LED driver");
 MODULE_LICENSE("GPL");
-
