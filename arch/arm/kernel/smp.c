@@ -339,6 +339,8 @@ asmlinkage void __cpuinit secondary_start_kernel(void)
 
 	notify_cpu_starting(cpu);
 
+	calibrate_delay();
+
 	smp_store_cpu_info(cpu);
 
 	/*
@@ -483,12 +485,11 @@ static DEFINE_PER_CPU(struct clock_event_device, percpu_clockevent);
 static void ipi_timer(void)
 {
 	struct clock_event_device *evt = &__get_cpu_var(percpu_clockevent);
-	if (evt->event_handler != NULL)
-		evt->event_handler(evt);
+	evt->event_handler(evt);
 }
 
 #ifdef CONFIG_GENERIC_CLOCKEVENTS_BROADCAST
-void smp_timer_broadcast(const struct cpumask *mask)
+static void smp_timer_broadcast(const struct cpumask *mask)
 {
 	smp_cross_call(mask, IPI_TIMER);
 }
