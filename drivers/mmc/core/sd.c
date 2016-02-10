@@ -12,7 +12,6 @@
 
 #include <linux/err.h>
 #include <linux/slab.h>
-#include <linux/stat.h>
 
 #include <linux/mmc/host.h>
 #include <linux/mmc/card.h>
@@ -24,6 +23,10 @@
 #include "mmc_ops.h"
 #include "sd.h"
 #include "sd_ops.h"
+
+#ifdef CONFIG_MMC_SD_CHECK_BOOT_SIGNATURE
+#include "sd_check_mbr.h"
+#endif
 
 static const unsigned int tran_exp[] = {
 	10000,		100000,		1000000,	10000000,
@@ -309,6 +312,9 @@ static int mmc_read_switch(struct mmc_card *card)
 
 	if (status[13] & SD_MODE_HIGH_SPEED)
 		card->sw_caps.hs_max_dtr = HIGH_SPEED_MAX_DTR;
+
+	if (status[13] & UHS_SDR50_BUS_SPEED)
+		card->sw_caps.hs_max_dtr = 50000000;
 
 	if (card->scr.sda_spec3) {
 		card->sw_caps.sd3_bus_mode = status[13];
@@ -609,72 +615,6 @@ static int sd_set_current_limit(struct mmc_card *card, u8 *status)
 	return 0;
 }
 
-/**
- * mmc_sd_change_bus_speed() - Change SD card bus frequency at runtime
- * @host: pointer to mmc host structure
- * @freq: pointer to desired frequency to be set
- *
- * Change the SD card bus frequency at runtime after the card is
- * initialized. Callers are expected to make sure of the card's
- * state (DATA/RCV/TRANSFER) beforing changing the frequency at runtime.
- *
- * If the frequency to change is greater than max. supported by card,
- * *freq is changed to max. supported by card and if it is less than min.
- * supported by host, *freq is changed to min. supported by host.
- */
-static int mmc_sd_change_bus_speed(struct mmc_host *host, unsigned long *freq)
-{
-	int err = 0;
-	struct mmc_card *card;
-
-	mmc_claim_host(host);
-	/*
-	 * Assign card pointer after claiming host to avoid race
-	 * conditions that may arise during removal of the card.
-	 */
-	card = host->card;
-
-	/* sanity checks */
-	if (!card || !freq) {
-		err = -EINVAL;
-		goto out;
-	}
-
-	if (mmc_card_uhs(card)) {
-		if (*freq > card->sw_caps.uhs_max_dtr)
-			*freq = card->sw_caps.uhs_max_dtr;
-	} else {
-		if (*freq > mmc_sd_get_max_clock(card))
-			*freq = mmc_sd_get_max_clock(card);
-	}
-
-	if (*freq < host->f_min)
-		*freq = host->f_min;
-
-	mmc_set_clock(host, (unsigned int) (*freq));
-
-	if (!mmc_host_is_spi(card->host) && mmc_sd_card_uhs(card)
-			&& card->host->ops->execute_tuning) {
-		/*
-		 * We try to probe host driver for tuning for any
-		 * frequency, it is host driver responsibility to
-		 * perform actual tuning only when required.
-		 */
-		mmc_host_clk_hold(card->host);
-		err = card->host->ops->execute_tuning(card->host,
-				MMC_SEND_TUNING_BLOCK);
-		mmc_host_clk_release(card->host);
-
-		if (err)
-			pr_warn("%s: %s: tuning execution failed %d\n",
-				   mmc_hostname(card->host), __func__, err);
-	}
-
-out:
-	mmc_release_host(host);
-	return err;
-}
-
 /*
  * UHS-I specific initialization procedure
  */
@@ -799,7 +739,9 @@ int mmc_sd_get_cid(struct mmc_host *host, u32 ocr, u32 *cid, u32 *rocr)
 	 * state.  We wait 1ms to give cards time to
 	 * respond.
 	 */
-	mmc_go_idle(host);
+	err = mmc_go_idle(host);
+	if (err)
+		return err;
 
 	/*
 	 * If SD_SEND_IF_COND indicates an SD 2.0
@@ -1118,11 +1060,7 @@ static void mmc_sd_remove(struct mmc_host *host)
 	BUG_ON(!host->card);
 
 	mmc_remove_card(host->card);
-
-	mmc_claim_host(host);
 	host->card = NULL;
-	mmc_exit_clk_scaling(host);
-	mmc_release_host(host);
 }
 
 /*
@@ -1153,7 +1091,7 @@ static void mmc_sd_detect(struct mmc_host *host)
 	 */
 #ifdef CONFIG_MMC_PARANOID_SD_INIT
 	while(retries) {
-		err = mmc_send_status(host->card, NULL);
+		err = _mmc_detect_card_removed(host);
 		if (err) {
 			retries--;
 			udelay(5);
@@ -1187,12 +1125,6 @@ static int mmc_sd_suspend(struct mmc_host *host)
 {
 	BUG_ON(!host);
 	BUG_ON(!host->card);
-
-	/*
-	 * Disable clock scaling before suspend and enable it after resume so
-	 * as to avoid clock scaling decisions kicking in during this window.
-	 */
-	mmc_disable_clk_scaling(host);
 
 	mmc_claim_host(host);
 	if (!mmc_host_is_spi(host))
@@ -1228,11 +1160,8 @@ static int mmc_sd_resume(struct mmc_host *host)
 		if (err) {
 			printk(KERN_ERR "%s: Re-init card rc = %d (retries = %d)\n",
 			       mmc_hostname(host), err, retries);
+			mdelay(5);
 			retries--;
-			mmc_power_off(host);
-			usleep_range(5000, 5500);
-			mmc_power_up(host);
-			mmc_select_voltage(host, host->ocr);
 			continue;
 		}
 		break;
@@ -1242,13 +1171,6 @@ static int mmc_sd_resume(struct mmc_host *host)
 #endif
 	mmc_release_host(host);
 
-	/*
-	 * We have done full initialization of the card,
-	 * reset the clk scale stats and current frequency.
-	 */
-	if (mmc_can_scale_clk(host))
-		mmc_init_clk_scaling(host);
-
 	return err;
 }
 
@@ -1256,16 +1178,10 @@ static int mmc_sd_power_restore(struct mmc_host *host)
 {
 	int ret;
 
-	/* Disable clk scaling to avoid switching frequencies intermittently */
-	mmc_disable_clk_scaling(host);
-
 	host->card->state &= ~MMC_STATE_HIGHSPEED;
 	mmc_claim_host(host);
 	ret = mmc_sd_init_card(host, host->ocr, host->card);
 	mmc_release_host(host);
-
-	if (mmc_can_scale_clk(host))
-		mmc_init_clk_scaling(host);
 
 	return ret;
 }
@@ -1277,7 +1193,6 @@ static const struct mmc_bus_ops mmc_sd_ops = {
 	.resume = NULL,
 	.power_restore = mmc_sd_power_restore,
 	.alive = mmc_sd_alive,
-	.change_bus_speed = mmc_sd_change_bus_speed,
 };
 
 static const struct mmc_bus_ops mmc_sd_ops_unsafe = {
@@ -1287,7 +1202,6 @@ static const struct mmc_bus_ops mmc_sd_ops_unsafe = {
 	.resume = mmc_sd_resume,
 	.power_restore = mmc_sd_power_restore,
 	.alive = mmc_sd_alive,
-	.change_bus_speed = mmc_sd_change_bus_speed,
 };
 
 static void mmc_sd_attach_bus_ops(struct mmc_host *host)
@@ -1379,10 +1293,6 @@ int mmc_attach_sd(struct mmc_host *host)
 		err = mmc_sd_init_card(host, host->ocr, NULL);
 		if (err) {
 			retries--;
-			mmc_power_off(host);
-			usleep_range(5000, 5500);
-			mmc_power_up(host);
-			mmc_select_voltage(host, host->ocr);
 			continue;
 		}
 		break;
@@ -1399,15 +1309,18 @@ int mmc_attach_sd(struct mmc_host *host)
 		goto err;
 #endif
 
+#ifdef CONFIG_MMC_SD_CHECK_BOOT_SIGNATURE
+	if (mmc_sd_check_boot_signature(host->card)) {
+		err = -EFAULT;
+		goto err;
+	}
+#endif
+
 	mmc_release_host(host);
 	err = mmc_add_card(host->card);
 	mmc_claim_host(host);
 	if (err)
 		goto remove_card;
-
-	/* Initialize clock scaling only for high frequency modes */
-	if (mmc_card_uhs(host->card))
-		mmc_init_clk_scaling(host);
 
 	return 0;
 

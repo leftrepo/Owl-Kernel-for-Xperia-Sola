@@ -12,9 +12,7 @@
 
 #include <linux/leds.h>
 #include <linux/sched.h>
-#include <linux/device.h>
 #include <linux/fault-inject.h>
-#include <linux/wakelock.h>
 
 #include <linux/mmc/core.h>
 #include <linux/mmc/pm.h>
@@ -136,10 +134,6 @@ struct mmc_host_ops {
 	void	(*enable_preset_value)(struct mmc_host *host, bool enable);
 	int	(*select_drive_strength)(unsigned int max_dtr, int host_drv, int card_drv);
 	void	(*hw_reset)(struct mmc_host *host);
-	unsigned long (*get_max_frequency)(struct mmc_host *host);
-	unsigned long (*get_min_frequency)(struct mmc_host *host);
-	int	(*stop_request)(struct mmc_host *host);
-	unsigned int	(*get_xfer_remain)(struct mmc_host *host);
 };
 
 struct mmc_card;
@@ -153,36 +147,6 @@ struct mmc_async_req {
 	 * Returns 0 if success otherwise non zero.
 	 */
 	int (*err_check) (struct mmc_card *, struct mmc_async_req *);
-	/* Reinserts request back to the block layer */
-	void (*reinsert_req) (struct mmc_async_req *);
-	/* update what part of request is not done (packed_fail_idx) */
-	int (*update_interrupted_req) (struct mmc_card *,
-			struct mmc_async_req *);
-};
-
-/**
- * mmc_context_info - synchronization details for mmc context
- * @is_done_rcv		wake up reason was done request
- * @is_new_req		wake up reason was new request
- * @is_waiting_last_req	is true, when 1 request running on the bus and
- *			NULL fetched as second request. MMC_BLK_NEW_REQUEST
- *			notification will wake up mmc thread from waiting.
- * @is_urgent		wake up reason was urgent request
- * @is_waiting		is true, when first request is running on the bus,
- *			second request preparation started or mmc thread is
- *			waiting for the completion of the current request
- *			(latter case is like @is_waiting_last_req)
- * @wait		wait queue
- * @lock		lock to protect data fields
- */
-struct mmc_context_info {
-	bool			is_done_rcv;
-	bool			is_new_req;
-	bool			is_waiting_last_req;
-	bool			is_urgent;
-	bool			is_waiting;
-	wait_queue_head_t	wait;
-	spinlock_t		lock;
 };
 
 struct mmc_hotplug {
@@ -274,18 +238,13 @@ struct mmc_host {
 #define MMC_CAP2_DETECT_ON_ERR	(1 << 8)	/* On I/O err check card removal */
 #define MMC_CAP2_HC_ERASE_SZ	(1 << 9)	/* High-capacity erase size */
 
-#define MMC_CAP2_PACKED_RD	(1 << 12)	/* Allow packed read */
-#define MMC_CAP2_PACKED_WR	(1 << 13)	/* Allow packed write */
-#define MMC_CAP2_PACKED_CMD	(MMC_CAP2_PACKED_RD | \
-				 MMC_CAP2_PACKED_WR) /* Allow packed commands */
-#define MMC_CAP2_PACKED_WR_CONTROL (1 << 14) /* Allow write packing control */
-
-#define MMC_CAP2_SANITIZE	(1 << 15)		/* Support Sanitize */
-#define MMC_CAP2_INIT_BKOPS	    (1 << 16)	/* Need to set BKOPS_EN */
-#define MMC_CAP2_CLK_SCALE	(1 << 17)	/* Allow dynamic clk scaling */
-#define MMC_CAP2_STOP_REQUEST	(1 << 18)	/* Allow stop ongoing request */
 	mmc_pm_flag_t		pm_caps;	/* supported pm features */
+	unsigned int        power_notify_type;
+#define MMC_HOST_PW_NOTIFY_NONE		0
+#define MMC_HOST_PW_NOTIFY_SHORT	1
+#define MMC_HOST_PW_NOTIFY_LONG		2
 
+#ifdef CONFIG_MMC_CLKGATE
 	int			clk_requests;	/* internal reference counter */
 	unsigned int		clk_delay;	/* number of MCI clk hold cycles */
 	bool			clk_gated;	/* clock gated */
@@ -295,6 +254,7 @@ struct mmc_host {
 	struct mutex		clk_gate_mutex;	/* mutex for clock gating */
 	struct device_attribute clkgate_delay_attr;
 	unsigned long           clkgate_delay;
+#endif
 
 	/* host specific block data */
 	unsigned int		max_seg_size;	/* see blk_queue_max_segment_size */
@@ -325,21 +285,19 @@ struct mmc_host {
 
 	wait_queue_head_t	wq;
 	struct task_struct	*claimer;	/* task that has host claimed */
-	struct task_struct	*suspend_task;
 	int			claim_cnt;	/* "claim" nesting count */
 
 	struct delayed_work	detect;
-	struct wake_lock	detect_wake_lock;
-	const char		*wlock_name;
+
+	struct delayed_work	resume;		/* deferred resume work */
 	int			detect_change;	/* card detect flag */
 	struct mmc_hotplug	hotplug;
+	unsigned int		pm_state;	/* used for deferred resume */
+#define MMC_HOST_DEFERRED_RESUME	(1 << 0)
+#define MMC_HOST_NEEDS_RESUME		(1 << 1)
 
 	const struct mmc_bus_ops *bus_ops;	/* current bus driver */
 	unsigned int		bus_refs;	/* reference counter */
-
-	unsigned int		bus_resume_flags;
-#define MMC_BUSRESUME_MANUAL_RESUME	(1 << 0)
-#define MMC_BUSRESUME_NEEDS_RESUME	(1 << 1)
 
 	unsigned int		sdio_irqs;
 	struct task_struct	*sdio_irq_thread;
@@ -359,7 +317,6 @@ struct mmc_host {
 	struct dentry		*debugfs_root;
 
 	struct mmc_async_req	*areq;		/* active async req */
-	struct mmc_context_info	context_info;	/* async synchronization info */
 
 #ifdef CONFIG_FAIL_MMC_REQUEST
 	struct fault_attr	fail_mmc_request;
@@ -376,31 +333,6 @@ struct mmc_host {
 	} embedded_sdio_data;
 #endif
 
-#ifdef CONFIG_MMC_PERF_PROFILING
-	struct {
-
-		unsigned long rbytes_drv;  /* Rd bytes MMC Host  */
-		unsigned long wbytes_drv;  /* Wr bytes MMC Host  */
-		ktime_t rtime_drv;	   /* Rd time  MMC Host  */
-		ktime_t wtime_drv;	   /* Wr time  MMC Host  */
-		ktime_t start;
-	} perf;
-	bool perf_enable;
-#endif
-	struct mmc_ios saved_ios;
-	struct {
-		unsigned long	busy_time_us;
-		unsigned long	window_time;
-		unsigned long	curr_freq;
-		unsigned long	polling_delay_ms;
-		unsigned int	up_threshold;
-		unsigned int	down_threshold;
-		ktime_t		start_busy;
-		bool		enable;
-		bool		initialized;
-		bool		in_progress;
-		struct delayed_work work;
-	} clk_scaling;
 	unsigned long		private[0] ____cacheline_aligned;
 };
 
@@ -427,21 +359,10 @@ static inline void *mmc_priv(struct mmc_host *host)
 #define mmc_dev(x)	((x)->parent)
 #define mmc_classdev(x)	(&(x)->class_dev)
 #define mmc_hostname(x)	(dev_name(&(x)->class_dev))
-#define mmc_bus_needs_resume(host) ((host)->bus_resume_flags & MMC_BUSRESUME_NEEDS_RESUME)
-#define mmc_bus_manual_resume(host) ((host)->bus_resume_flags & MMC_BUSRESUME_MANUAL_RESUME)
-
-static inline void mmc_set_bus_resume_policy(struct mmc_host *host, int manual)
-{
-	if (manual)
-		host->bus_resume_flags |= MMC_BUSRESUME_MANUAL_RESUME;
-	else
-		host->bus_resume_flags &= ~MMC_BUSRESUME_MANUAL_RESUME;
-}
-
-extern int mmc_resume_bus(struct mmc_host *host);
 
 extern int mmc_suspend_host(struct mmc_host *);
 extern int mmc_resume_host(struct mmc_host *);
+extern void mmc_resume_host_sync(struct mmc_host *);
 
 extern int mmc_power_save_host(struct mmc_host *host);
 extern int mmc_power_restore_host(struct mmc_host *host);
@@ -486,7 +407,7 @@ int mmc_card_can_sleep(struct mmc_host *host);
 int mmc_pm_notify(struct notifier_block *notify_block, unsigned long, void *);
 
 /* Module parameter */
-extern bool mmc_assume_removable;
+extern int mmc_assume_removable;
 
 static inline int mmc_card_is_removable(struct mmc_host *host)
 {
@@ -513,12 +434,14 @@ static inline int mmc_boot_partition_access(struct mmc_host *host)
 	return !(host->caps2 & MMC_CAP2_BOOTPART_NOACC);
 }
 
-static inline int mmc_host_uhs(struct mmc_host *host)
+static inline int mmc_host_deferred_resume(struct mmc_host *host)
 {
-	return host->caps &
-		(MMC_CAP_UHS_SDR12 | MMC_CAP_UHS_SDR25 |
-		 MMC_CAP_UHS_SDR50 | MMC_CAP_UHS_SDR104 |
-		 MMC_CAP_UHS_DDR50);
+	return host->pm_state & MMC_HOST_DEFERRED_RESUME;
+}
+
+static inline int mmc_host_needs_resume(struct mmc_host *host)
+{
+	return host->pm_state & MMC_HOST_NEEDS_RESUME;
 }
 
 #ifdef CONFIG_MMC_CLKGATE
@@ -540,4 +463,6 @@ static inline unsigned int mmc_host_clk_rate(struct mmc_host *host)
 	return host->ios.clock;
 }
 #endif
-#endif /* LINUX_MMC_HOST_H */
+
+#endif
+

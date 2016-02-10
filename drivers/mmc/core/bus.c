@@ -11,11 +11,9 @@
  *  MMC card bus driver model
  */
 
-#include <linux/export.h>
 #include <linux/device.h>
 #include <linux/err.h>
 #include <linux/slab.h>
-#include <linux/stat.h>
 #include <linux/pm_runtime.h>
 
 #include <linux/mmc/card.h>
@@ -122,15 +120,14 @@ static int mmc_bus_remove(struct device *dev)
 	return 0;
 }
 
-#ifdef CONFIG_PM_SLEEP
-static int mmc_bus_suspend(struct device *dev)
+static int mmc_bus_suspend(struct device *dev, pm_message_t state)
 {
 	struct mmc_driver *drv = to_mmc_driver(dev->driver);
 	struct mmc_card *card = mmc_dev_to_card(dev);
 	int ret = 0;
 
 	if (dev->driver && drv->suspend)
-		ret = drv->suspend(card);
+		ret = drv->suspend(card, state);
 	return ret;
 }
 
@@ -144,7 +141,6 @@ static int mmc_bus_resume(struct device *dev)
 		ret = drv->resume(card);
 	return ret;
 }
-#endif
 
 #ifdef CONFIG_PM_RUNTIME
 
@@ -167,13 +163,19 @@ static int mmc_runtime_idle(struct device *dev)
 	return pm_runtime_suspend(dev);
 }
 
-#endif /* !CONFIG_PM_RUNTIME */
-
 static const struct dev_pm_ops mmc_bus_pm_ops = {
-	SET_RUNTIME_PM_OPS(mmc_runtime_suspend, mmc_runtime_resume,
-			mmc_runtime_idle)
-	SET_SYSTEM_SLEEP_PM_OPS(mmc_bus_suspend, mmc_bus_resume)
+	.runtime_suspend	= mmc_runtime_suspend,
+	.runtime_resume		= mmc_runtime_resume,
+	.runtime_idle		= mmc_runtime_idle,
 };
+
+#define MMC_PM_OPS_PTR	(&mmc_bus_pm_ops)
+
+#else /* !CONFIG_PM_RUNTIME */
+
+#define MMC_PM_OPS_PTR	NULL
+
+#endif /* !CONFIG_PM_RUNTIME */
 
 static struct bus_type mmc_bus_type = {
 	.name		= "mmc",
@@ -182,7 +184,9 @@ static struct bus_type mmc_bus_type = {
 	.uevent		= mmc_bus_uevent,
 	.probe		= mmc_bus_probe,
 	.remove		= mmc_bus_remove,
-	.pm		= &mmc_bus_pm_ops,
+	.suspend	= mmc_bus_suspend,
+	.resume		= mmc_bus_resume,
+	.pm		= MMC_PM_OPS_PTR,
 };
 
 int mmc_register_bus(void)
@@ -250,9 +254,6 @@ struct mmc_card *mmc_alloc_card(struct mmc_host *host, struct device_type *type)
 	card->dev.bus = &mmc_bus_type;
 	card->dev.release = mmc_release_card;
 	card->dev.type = type;
-
-	spin_lock_init(&card->bkops_info.bkops_stats.lock);
-	spin_lock_init(&card->wr_pack_stats.lock);
 
 	return card;
 }
@@ -325,7 +326,6 @@ int mmc_add_card(struct mmc_card *card)
 #ifdef CONFIG_DEBUG_FS
 	mmc_add_card_debugfs(card);
 #endif
-	mmc_init_context_info(card->host);
 
 	ret = device_add(&card->dev);
 	if (ret)
@@ -356,8 +356,6 @@ void mmc_remove_card(struct mmc_card *card)
 		}
 		device_del(&card->dev);
 	}
-
-	kfree(card->wr_pack_stats.packing_events);
 
 	put_device(&card->dev);
 }
