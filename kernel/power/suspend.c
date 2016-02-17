@@ -166,10 +166,9 @@ static int suspend_enter(suspend_state_t state, bool *wakeup)
 	if (suspend_test(TEST_PLATFORM))
 		goto Platform_wake;
 
-
 	error = disable_nonboot_cpus();
 	if (error || suspend_test(TEST_CPUS))
-		goto Platform_wake;
+		goto Enable_cpus;
 
 	arch_suspend_disable_irqs();
 	BUG_ON(!irqs_disabled());
@@ -186,6 +185,9 @@ static int suspend_enter(suspend_state_t state, bool *wakeup)
 
 	arch_suspend_enable_irqs();
 	BUG_ON(irqs_disabled());
+
+ Enable_cpus:
+	enable_nonboot_cpus();
 
  Platform_wake:
 	if (suspend_ops->wake)
@@ -297,10 +299,7 @@ static int enter_state(suspend_state_t state)
 	if (!mutex_trylock(&pm_mutex))
 		return -EBUSY;
 
-	printk(KERN_INFO "PM: Syncing filesystems ... ");
-	sys_sync();
-	printk("done.\n");
-
+	suspend_sys_sync_queue();
 	pr_debug("PM: Preparing system for %s sleep\n", pm_states[state]);
 	error = suspend_prepare();
 	if (error)
