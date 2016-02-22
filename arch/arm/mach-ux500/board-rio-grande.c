@@ -606,19 +606,6 @@ static struct lsm303dlhc_acc_lt_platform_data
 };
 #endif
 
-static struct ab3550_platform_data ab3550_plf_data = {
-        .irq = {
-                .base = 0,
-                .count = 0,
-        },
-        .dev_data = {
-        },
-        .dev_data_sz = {
-        },
-        .init_settings = NULL,
-        .init_settings_sz = 0,
-};
-
 #if defined(CONFIG_LM3560) || defined(CONFIG_LM3561)
 #define LM3560_HW_RESET_GPIO 6
 static int lm356x_pwr(struct device *dev, bool request)
@@ -1137,12 +1124,6 @@ static struct i2c_board_info __initdata pdp_i2c0_devices[] = {
 };
 
 static struct i2c_board_info __initdata pdp_i2c1_devices[] = {
-	{
-		/* AB3550 */
-		I2C_BOARD_INFO("ab3550", 0x94 >> 1),
-		.irq = -1,
-		.platform_data = &ab3550_plf_data,
-	},
 #ifdef CONFIG_INPUT_LPS331AP
 	{
 		I2C_BOARD_INFO(LPS331AP_PRS_DEV_NAME, 0xB8 >> 1),

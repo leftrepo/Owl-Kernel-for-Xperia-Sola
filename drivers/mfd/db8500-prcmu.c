@@ -2321,13 +2321,11 @@ retry:
 		if (wait_for_completion_timeout(&mb0_transfer.ac_wake_work,
 				msecs_to_jiffies(5000))) {
 			goto retry;
-
 		} else {
 			db8500_prcmu_debug_dump(__func__, true, true);
-			panic("prcmu: %s timed out (5 s) waiting for a reply.\n",
-				__func__);
+			pr_crit("prcmu: %s timed out (5 s) waiting for a reply.\n",
+			__func__);
 		}
-
 	}
 
 unlock_and_return:
@@ -2355,7 +2353,7 @@ void prcmu_ac_sleep_req()
 	if (!wait_for_completion_timeout(&mb0_transfer.ac_wake_work,
 			msecs_to_jiffies(5000))) {
 		db8500_prcmu_debug_dump(__func__, true, true);
-		panic("prcmu: %s timed out (5 s) waiting for a reply.\n",
+		pr_crit("prcmu: %s timed out (5 s) waiting for a reply.\n",
 			__func__);
 	}
 
