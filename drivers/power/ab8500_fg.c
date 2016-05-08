@@ -1,6 +1,6 @@
 /*
  * Copyright (C) ST-Ericsson AB 2010
- * Copyright (C) 2012 Sony Mobile Communications AB.
+ * Copyright (C) 2012-2013 Sony Mobile Communications AB.
  *
  * Main and Back-up battery management driver.
  *
@@ -398,7 +398,10 @@ static struct timespec ab8500_fg_get_time(void)
 {
 	unsigned long long ctime;
 	struct timespec time;
-	static int cpu = smp_processor_id();
+	static int cpu = -1;
+
+	if (cpu == -1)
+		cpu = smp_processor_id();
 
 	ctime = cpu_clock(cpu);
 	time.tv_nsec = sector_div(ctime, NSEC_PER_SEC);
@@ -825,7 +828,7 @@ static void ab8500_fg_acc_cur_work(struct work_struct *work)
 	}
 
 	ret = abx500_set_register_interruptible(di->dev, AB8500_GAS_GAUGE,
-		AB8500_GASG_CC_NCOV_ACCU_CTRL, RD_NCONV_ACCU_REQ | RESET_ACCU);
+		AB8500_GASG_CC_NCOV_ACCU_CTRL, RD_NCONV_ACCU_REQ);
 	if (ret < 0)
 		goto exit;
 
@@ -843,6 +846,11 @@ static void ab8500_fg_acc_cur_work(struct work_struct *work)
 
 	ret = abx500_get_register_interruptible(di->dev, AB8500_GAS_GAUGE,
 		AB8500_GASG_CC_NCOV_ACCU_HIGH, &high);
+	if (ret < 0)
+		goto exit;
+
+	ret = abx500_set_register_interruptible(di->dev, AB8500_GAS_GAUGE,
+		AB8500_GASG_CC_NCOV_ACCU_CTRL, RESET_ACCU);
 	if (ret < 0)
 		goto exit;
 
@@ -894,17 +902,21 @@ static void ab8500_fg_acc_cur_work(struct work_struct *work)
 			dev_info(di->dev, "Stopping missed accu logic\n");
 		}
 	} else {
-		/*
-		 * Convert to unit value in mA
-		 * Full scale input voltage is
-		 * 66.660mV => LSB = 66.660mV/(4096*res) = 1.627mA
-		 * Given a 250ms conversion cycle time the LSB corresponds
-		 * to 112.9 nAh. Convert to current by dividing
-		 * by the conversion time in hours (= samples / (3600 * 4)h)
-		 * 112.9nAh assumes 10mOhm, but fg_res is in 0.1mOhm
-		 */
-		di->avg_curr = (di->accu_charge * 36) /
-			((di->fg_samples / 4) * 10);
+		if (di->fg_samples) {
+			/*
+			* Convert to unit value in mA
+			* Full scale input voltage is
+			* 66.660mV => LSB = 66.660mV/(4096*res) = 1.627mA
+			* Given a 250ms conversion cycle time the LSB corresponds
+			* to 112.9 nAh. Convert to current by dividing
+			* by the conversion time in hours (= samples / (3600 * 4)h)
+			* 112.9nAh assumes 10mOhm, but fg_res is in 0.1mOhm
+			*/
+			di->avg_curr = (di->accu_charge * 36 * 4) /
+				(di->fg_samples * 10);
+		} else
+			dev_err(di->dev,
+				"samples is zero, using previous calculated average current\n");
 
 		di->flags.conv_done = true;
 		queue_work(di->fg_wq, &di->fg_work);
@@ -1582,6 +1594,10 @@ static void ab8500_fg_check_capacity_limits(struct ab8500_fg *di, bool init)
 				di->bat_cap.cap_scale.disable_cap_level = 100;
 			}
 		} else if (di->bat_cap.prev_percent != percent) {
+			dev_dbg(di->dev,
+				"battery reported full "
+				"but capacity dropping: %d\n",
+				percent);
 			di->bat_cap.prev_percent = percent;
 			di->bat_cap.prev_mah = di->bat_cap.mah;
 
@@ -1626,6 +1642,16 @@ static void ab8500_fg_check_capacity_limits(struct ab8500_fg *di, bool init)
 				di->bat_cap.prev_percent, percent,
 				di->bat_cap.permille);
 		}
+	} else if (percent == 0) {
+		/*
+		 * We will not report 0% unless we've got
+		 * the LOW_BAT IRQ, no matter what the FG
+		 * algorithm says.
+		 */
+		di->bat_cap.prev_percent = 1;
+		percent = 1;
+
+		changed = true;
 	}
 
 	if (changed) {
@@ -1709,7 +1735,7 @@ static void ab8500_fg_discharge_state_to(struct ab8500_fg *di,
 	if (di->discharge_state == new_state)
 		return;
 
-	dev_dbg(di->dev, "Disharge state from %d [%s] to %d [%s]\n",
+	dev_dbg(di->dev, "Discharge state from %d [%s] to %d [%s]\n",
 		di->discharge_state,
 		discharge_state[di->discharge_state],
 		new_state,
@@ -2289,13 +2315,17 @@ static void ab8500_fg_low_bat_work(struct work_struct *work)
 		 * We need to re-schedule this check to be able to detect
 		 * if the voltage increases again during charging
 		 */
-		if (!di->flags.low_bat)
-			queue_delayed_work(di->shutdown_wq,
+		queue_delayed_work(di->shutdown_wq,
 				&di->fg_low_bat_work,
 				msecs_to_jiffies(LOW_BAT_CHECK_INTERVAL));
 	} else {
 		di->flags.low_bat_delay = false;
-		di->flags.low_bat = false;
+		if (di->flags.low_bat) {
+			di->flags.low_bat = false;
+			ab8500_fg_clear_cap_samples(di);
+			ab8500_fg_update_unusable_permille(di, di->pdata->ddata->lowbat_hysteresis);
+			ab8500_fg_calc_cap_discharge_voltage(di, true);
+		}
 		dev_warn(di->dev, "Battery voltage OK again: %dmV\n", di->vbat);
 	}
 	mutex_unlock(&di->shutdown_lock);
