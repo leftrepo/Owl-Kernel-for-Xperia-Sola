@@ -56,7 +56,7 @@ static int process_sdio_pending_irqs(struct mmc_host *host)
 	count = 0;
 	for (i = 1; i <= 7; i++) {
 		if (pending & (1 << i)) {
-			struct sdio_func *func = card->sdio_func[i - 1];
+			func = card->sdio_func[i - 1];
 			if (!func) {
 				pr_warning("%s: pending IRQ for "
 					"non-existent function\n",
