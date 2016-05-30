@@ -368,66 +368,6 @@ struct _mmc_csd {
 #define EXT_CSD_CARD_TYPE_SDR_1_2V	(1<<5)	/* Card can run at 200MHz */
 						/* SDR mode @1.2V I/O */
 
-#define EXT_CSD_CARD_TYPE_SDR_200	(EXT_CSD_CARD_TYPE_SDR_1_8V | \
-					 EXT_CSD_CARD_TYPE_SDR_1_2V)
-
-#define EXT_CSD_CARD_TYPE_SDR_ALL	(EXT_CSD_CARD_TYPE_SDR_200 | \
-					 EXT_CSD_CARD_TYPE_52 | \
-					 EXT_CSD_CARD_TYPE_26)
-
-#define	EXT_CSD_CARD_TYPE_SDR_1_2V_ALL	(EXT_CSD_CARD_TYPE_SDR_1_2V | \
-					 EXT_CSD_CARD_TYPE_52 | \
-					 EXT_CSD_CARD_TYPE_26)
-
-#define	EXT_CSD_CARD_TYPE_SDR_1_8V_ALL	(EXT_CSD_CARD_TYPE_SDR_1_8V | \
-					 EXT_CSD_CARD_TYPE_52 | \
-					 EXT_CSD_CARD_TYPE_26)
-
-#define EXT_CSD_CARD_TYPE_SDR_1_2V_DDR_1_8V	(EXT_CSD_CARD_TYPE_SDR_1_2V | \
-						 EXT_CSD_CARD_TYPE_DDR_1_8V | \
-						 EXT_CSD_CARD_TYPE_52 | \
-						 EXT_CSD_CARD_TYPE_26)
-
-#define EXT_CSD_CARD_TYPE_SDR_1_8V_DDR_1_8V	(EXT_CSD_CARD_TYPE_SDR_1_8V | \
-						 EXT_CSD_CARD_TYPE_DDR_1_8V | \
-						 EXT_CSD_CARD_TYPE_52 | \
-						 EXT_CSD_CARD_TYPE_26)
-
-#define EXT_CSD_CARD_TYPE_SDR_1_2V_DDR_1_2V	(EXT_CSD_CARD_TYPE_SDR_1_2V | \
-						 EXT_CSD_CARD_TYPE_DDR_1_2V | \
-						 EXT_CSD_CARD_TYPE_52 | \
-						 EXT_CSD_CARD_TYPE_26)
-
-#define EXT_CSD_CARD_TYPE_SDR_1_8V_DDR_1_2V	(EXT_CSD_CARD_TYPE_SDR_1_8V | \
-						 EXT_CSD_CARD_TYPE_DDR_1_2V | \
-						 EXT_CSD_CARD_TYPE_52 | \
-						 EXT_CSD_CARD_TYPE_26)
-
-#define EXT_CSD_CARD_TYPE_SDR_1_2V_DDR_52	(EXT_CSD_CARD_TYPE_SDR_1_2V | \
-						 EXT_CSD_CARD_TYPE_DDR_52 | \
-						 EXT_CSD_CARD_TYPE_52 | \
-						 EXT_CSD_CARD_TYPE_26)
-
-#define EXT_CSD_CARD_TYPE_SDR_1_8V_DDR_52	(EXT_CSD_CARD_TYPE_SDR_1_8V | \
-						 EXT_CSD_CARD_TYPE_DDR_52 | \
-						 EXT_CSD_CARD_TYPE_52 | \
-						 EXT_CSD_CARD_TYPE_26)
-
-#define EXT_CSD_CARD_TYPE_SDR_ALL_DDR_1_8V	(EXT_CSD_CARD_TYPE_SDR_200 | \
-						 EXT_CSD_CARD_TYPE_DDR_1_8V | \
-						 EXT_CSD_CARD_TYPE_52 | \
-						 EXT_CSD_CARD_TYPE_26)
-
-#define EXT_CSD_CARD_TYPE_SDR_ALL_DDR_1_2V	(EXT_CSD_CARD_TYPE_SDR_200 | \
-						 EXT_CSD_CARD_TYPE_DDR_1_2V | \
-						 EXT_CSD_CARD_TYPE_52 | \
-						 EXT_CSD_CARD_TYPE_26)
-
-#define EXT_CSD_CARD_TYPE_SDR_ALL_DDR_52	(EXT_CSD_CARD_TYPE_SDR_200 | \
-						 EXT_CSD_CARD_TYPE_DDR_52 | \
-						 EXT_CSD_CARD_TYPE_52 | \
-						 EXT_CSD_CARD_TYPE_26)
-
 #define EXT_CSD_BUS_WIDTH_1	0	/* Card is in 1 bit mode */
 #define EXT_CSD_BUS_WIDTH_4	1	/* Card is in 4 bit mode */
 #define EXT_CSD_BUS_WIDTH_8	2	/* Card is in 8 bit mode */
@@ -479,12 +419,5 @@ struct _mmc_csd {
 #define MMC_SWITCH_MODE_SET_BITS	0x01	/* Set bits which are 1 in value */
 #define MMC_SWITCH_MODE_CLEAR_BITS	0x02	/* Clear bits which are 1 in value */
 #define MMC_SWITCH_MODE_WRITE_BYTE	0x03	/* Set target to value */
-
-/*
- * MMC Poweroff Notify types
- */
-#define MMC_PW_OFF_NOTIFY_NONE		0
-#define MMC_PW_OFF_NOTIFY_SHORT		1
-#define MMC_PW_OFF_NOTIFY_LONG		2
 
 #endif /* LINUX_MMC_MMC_H */
