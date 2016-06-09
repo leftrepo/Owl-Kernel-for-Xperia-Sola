@@ -201,6 +201,18 @@ enum mmc_packed_stop_reasons {
 	MAX_REASONS,
 };
 
+enum mmc_blk_status {
+	MMC_BLK_SUCCESS = 0,
+	MMC_BLK_PARTIAL,
+	MMC_BLK_CMD_ERR,
+	MMC_BLK_RETRY,
+	MMC_BLK_ABORT,
+	MMC_BLK_DATA_ERR,
+	MMC_BLK_ECC_ERR,
+	MMC_BLK_NOMEDIUM,
+	MMC_BLK_NEW_REQUEST,
+};
+
 struct mmc_wr_pack_stats {
 	u32 *packing_events;
 	u32 pack_stop_reason[MAX_REASONS];
@@ -293,6 +305,31 @@ struct mmc_bkops_info {
 #define BKOPS_SIZE_PERCENTAGE_TO_QUEUE_DELAYED_WORK 1 /* 1% */
 };
 
+/**
+ * struct mmc_async_event_stats - async events stats data
+ *
+ * @enabled	A boolean indicating if the stats are initiated
+ *		and enabled
+ * The rest of the members in this struct are counters which are
+ * incremented at strategic locations in the async events flows.
+ */
+struct mmc_async_event_stats {
+	bool enabled;
+	u32 cmd_retry;
+	u32 new_request_flag;
+	u32 null_fetched;
+	u32 wakeup_new;
+	u32 q_no_waiting;
+	u32 done_flag;
+	u32 no_mmc_request_action;
+	u32 wakeup_mq_thread;
+	u32 fetch_due_to_new_req;
+	u32 returned_new_req;
+	u32 done_when_new_req_event_on;
+	u32 new_req_when_new_marked;
+	bool print_in_read;
+};
+
 /*
  * MMC device
  */
@@ -367,6 +404,8 @@ struct mmc_card {
 	struct mmc_wr_pack_stats wr_pack_stats; /* packed commands stats*/
 
 	struct mmc_bkops_info	bkops_info;
+	/* async events flow stats */
+	struct mmc_async_event_stats async_event_stats;
 };
 
 /*
@@ -597,5 +636,5 @@ extern void mmc_fixup_device(struct mmc_card *card,
 extern struct mmc_wr_pack_stats *mmc_blk_get_packed_statistics(
 			struct mmc_card *card);
 extern void mmc_blk_init_packed_statistics(struct mmc_card *card);
-
+extern void mmc_blk_init_async_event_statistics(struct mmc_card *card);
 #endif /* LINUX_MMC_CARD_H */

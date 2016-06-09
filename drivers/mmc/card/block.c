@@ -1656,6 +1656,39 @@ void mmc_blk_init_packed_statistics(struct mmc_card *card)
 }
 EXPORT_SYMBOL(mmc_blk_init_packed_statistics);
 
+/**
+ * mmc_blk_init_async_event_statistics() - Init async event
+ * statistics data
+ * @card:	The mmc_card in which the async_event_stats
+ *		struct is a member
+ *
+ * Initiate counters for the new request feature, and mark the
+ * statistics as enabled.
+ */
+void mmc_blk_init_async_event_statistics(struct mmc_card *card)
+{
+	if (!card)
+		return;
+
+	/* init async events tests stats */
+	memset(&card->async_event_stats,
+	       sizeof(struct mmc_async_event_stats), 0);
+	card->async_event_stats.null_fetched = 0;
+	card->async_event_stats.wakeup_new = 0;
+	card->async_event_stats.new_request_flag = 0;
+	card->async_event_stats.q_no_waiting = 0;
+	card->async_event_stats.enabled = true;
+	card->async_event_stats.no_mmc_request_action = 0;
+	card->async_event_stats.wakeup_mq_thread = 0;
+	card->async_event_stats.fetch_due_to_new_req = 0;
+	card->async_event_stats.returned_new_req = 0;
+	card->async_event_stats.done_flag = 0;
+	card->async_event_stats.cmd_retry = 0;
+	card->async_event_stats.done_when_new_req_event_on = 0;
+	card->async_event_stats.new_req_when_new_marked = 0;
+}
+EXPORT_SYMBOL(mmc_blk_init_async_event_statistics);
+
 static u8 mmc_blk_prep_packed_list(struct mmc_queue *mq, struct request *req)
 {
 	struct request_queue *q = mq->queue;
@@ -1668,7 +1701,12 @@ static u8 mmc_blk_prep_packed_list(struct mmc_queue *mq, struct request *req)
 	u8 put_back = 0;
 	u8 max_packed_rw = 0;
 	u8 reqs = 0;
-	struct mmc_wr_pack_stats *stats = &card->wr_pack_stats;
+	struct mmc_wr_pack_stats *stats;
+
+	if (!card)
+		goto no_packed;
+
+	stats = &card->wr_pack_stats;
 
 	mmc_blk_clear_packed(mq->mqrq_cur);
 
@@ -1995,6 +2033,7 @@ static int mmc_blk_issue_rw_rq(struct mmc_queue *mq, struct request *rqc)
 	struct mmc_async_req *areq;
 	const u8 packed_num = 2;
 	u8 reqs = 0;
+	struct mmc_async_event_stats *stats = &card->async_event_stats;
 
 	if (!rqc && !mq->mqrq_prev->req)
 		return 0;
@@ -2016,8 +2055,15 @@ static int mmc_blk_issue_rw_rq(struct mmc_queue *mq, struct request *rqc)
 		} else
 			areq = NULL;
 		areq = mmc_start_req(card->host, areq, (int *) &status);
-		if (!areq)
+		if (!areq) {
+			if (status == MMC_BLK_NEW_REQUEST && stats) {
+				if (stats->enabled)
+					stats->returned_new_req++;
+
+				mq->flags |= MMC_QUEUE_NEW_REQUEST;
+			}
 			return 0;
+		}
 
 		mq_rq = container_of(areq, struct mmc_queue_req, mmc_active);
 		brq = &mq_rq->brq;
@@ -2026,6 +2072,8 @@ static int mmc_blk_issue_rw_rq(struct mmc_queue *mq, struct request *rqc)
 		mmc_queue_bounce_post(mq_rq);
 
 		switch (status) {
+		case MMC_BLK_NEW_REQUEST:
+			BUG(); /* should never get here */
 		case MMC_BLK_SUCCESS:
 		case MMC_BLK_PARTIAL:
 			/*
@@ -2179,6 +2227,7 @@ static int mmc_blk_issue_rq(struct mmc_queue *mq, struct request *req)
 
 	mmc_blk_write_packing_control(mq, req);
 
+	mq->flags &= ~MMC_QUEUE_NEW_REQUEST;
 	if (req && req->cmd_flags & REQ_SANITIZE) {
 		/* complete ongoing async transfer before issuing sanitize */
 		if (card->host && card->host->areq)
