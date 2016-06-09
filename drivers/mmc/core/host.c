@@ -21,6 +21,7 @@
 #include <linux/leds.h>
 #include <linux/slab.h>
 #include <linux/suspend.h>
+#include <linux/pm_runtime.h>
 
 #include <linux/mmc/host.h>
 #include <linux/mmc/card.h>
@@ -115,6 +116,7 @@ static const struct dev_pm_ops mmc_host_pm_ops = {
 static struct class mmc_host_class = {
 	.name		= "mmc_host",
 	.dev_release	= mmc_host_classdev_release,
+	.pm		= &mmc_host_pm_ops,
 };
 
 int mmc_register_host_class(void)
@@ -684,6 +686,14 @@ int mmc_add_host(struct mmc_host *host)
 	WARN_ON((host->caps & MMC_CAP_SDIO_IRQ) &&
 		!host->ops->enable_sdio_irq);
 
+	if (mmc_use_core_runtime_pm(host)) {
+		err = pm_runtime_set_active(&host->class_dev);
+		if (err)
+			pr_err("%s: %s: failed setting runtime active: err: %d\n",
+			       mmc_hostname(host), __func__, err);
+		else
+			pm_runtime_enable(&host->class_dev);
+	}
 	err = device_add(&host->class_dev);
 	if (err)
 		return err;

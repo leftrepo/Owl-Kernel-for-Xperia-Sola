@@ -18,6 +18,7 @@
 #include <linux/mmc/card.h>
 #include <linux/mmc/mmc.h>
 #include <linux/mmc/sd.h>
+#include <linux/pm_runtime.h>
 
 #include "core.h"
 #include "bus.h"
@@ -806,9 +807,7 @@ int mmc_sd_get_cid(struct mmc_host *host, u32 ocr, u32 *cid, u32 *rocr)
 	 * state.  We wait 1ms to give cards time to
 	 * respond.
 	 */
-	err = mmc_go_idle(host);
-	if (err)
-		return err;
+	mmc_go_idle(host);
 
 	/*
 	 * If SD_SEND_IF_COND indicates an SD 2.0
@@ -1154,7 +1153,8 @@ static void mmc_sd_detect(struct mmc_host *host)
 
 	BUG_ON(!host);
 	BUG_ON(!host->card);
-       
+
+	mmc_rpm_hold(host, &host->card->dev);
 	mmc_claim_host(host);
 
 	/*
@@ -1179,6 +1179,13 @@ static void mmc_sd_detect(struct mmc_host *host)
 	err = _mmc_detect_card_removed(host);
 #endif
 	mmc_release_host(host);
+
+	/*
+	 * if detect fails, the device would be removed anyway;
+	 * the rpm framework would mark the device state suspended.
+	 */
+	if (!err)
+		mmc_rpm_release(host, &host->card->dev);
 
 	if (err) {
 		mmc_sd_remove(host);
