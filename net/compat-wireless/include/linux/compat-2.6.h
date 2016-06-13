@@ -14,7 +14,7 @@
  * Each compat file represents compatibility code for new kernel
  * code introduced for *that* kernel revision.
  */
-
+#include <../../../../include/linux/export.h>
 #include <linux/compat-2.6.22.h>
 #include <linux/compat-2.6.23.h>
 #include <linux/compat-2.6.24.h>
