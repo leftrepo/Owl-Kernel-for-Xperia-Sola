@@ -43,7 +43,6 @@
 
 #include <net/bluetooth/bluetooth.h>
 #include <net/bluetooth/hci_core.h>
-#include <net/bluetooth/sco.h>
 
 static void hci_le_connect(struct hci_conn *conn)
 {
@@ -147,13 +146,8 @@ void hci_add_sco(struct hci_conn *conn, __u16 handle)
 {
 	struct hci_dev *hdev = conn->hdev;
 	struct hci_cp_add_sco cp;
-	struct bt_sco_parameters *p = conn->sco_parameters;
-	__u16 pkt_type;
 
 	BT_DBG("%p", conn);
-
-	/* HCI_Add_SCO_Connection uses shifted bitmask for packet type */
-	pkt_type = (p->pkt_type << 5) & conn->pkt_type;
 
 	conn->state = BT_CONNECT;
 	conn->out = 1;
@@ -161,7 +155,7 @@ void hci_add_sco(struct hci_conn *conn, __u16 handle)
 	conn->attempt++;
 
 	cp.handle   = cpu_to_le16(handle);
-	cp.pkt_type = cpu_to_le16(pkt_type);
+	cp.pkt_type = cpu_to_le16(conn->pkt_type);
 
 	hci_send_cmd(hdev, HCI_OP_ADD_SCO, sizeof(cp), &cp);
 }
@@ -170,21 +164,8 @@ void hci_setup_sync(struct hci_conn *conn, __u16 handle)
 {
 	struct hci_dev *hdev = conn->hdev;
 	struct hci_cp_setup_sync_conn cp;
-	struct bt_sco_parameters *p = conn->sco_parameters;
-	__u16 voice_setting;
-	__u16 pkt_type;
 
 	BT_DBG("%p", conn);
-
-	/*
-	 * Combine voice setting using device parameters and air coding
-	 * format set by user.
-	 */
-	voice_setting = (hdev->voice_setting & 0xfffc) |
-					(p->voice_setting & 0x0003);
-
-	/* Bits for EDR packets have inverted logic in BT spec. */
-	pkt_type = (p->pkt_type & conn->pkt_type) ^ EDR_ESCO_MASK;
 
 	conn->state = BT_CONNECT;
 	conn->out = 1;
@@ -192,13 +173,13 @@ void hci_setup_sync(struct hci_conn *conn, __u16 handle)
 	conn->attempt++;
 
 	cp.handle   = cpu_to_le16(handle);
+	cp.pkt_type = cpu_to_le16(conn->pkt_type);
 
-	cp.tx_bandwidth   = cpu_to_le32(p->tx_bandwidth);
-	cp.rx_bandwidth   = cpu_to_le32(p->rx_bandwidth);
-	cp.max_latency    = cpu_to_le16(p->max_latency);
-	cp.voice_setting  = cpu_to_le16(voice_setting);
-	cp.retrans_effort = p->retrans_effort;
-	cp.pkt_type       = cpu_to_le16(pkt_type);
+	cp.tx_bandwidth   = cpu_to_le32(0x00001f40);
+	cp.rx_bandwidth   = cpu_to_le32(0x00001f40);
+	cp.max_latency    = cpu_to_le16(0xffff);
+	cp.voice_setting  = cpu_to_le16(hdev->voice_setting);
+	cp.retrans_effort = 0xff;
 
 	hci_send_cmd(hdev, HCI_OP_SETUP_SYNC_CONN, sizeof(cp), &cp);
 }
@@ -351,8 +332,7 @@ static void hci_conn_auto_accept(unsigned long arg)
 	hci_dev_unlock(hdev);
 }
 
-struct hci_conn *hci_conn_add(struct hci_dev *hdev, int type,
-					 bdaddr_t *dst)
+struct hci_conn *hci_conn_add(struct hci_dev *hdev, int type, bdaddr_t *dst)
 {
 	struct hci_conn *conn;
 
@@ -381,12 +361,13 @@ struct hci_conn *hci_conn_add(struct hci_dev *hdev, int type,
 		break;
 	case SCO_LINK:
 		if (lmp_esco_capable(hdev))
-			conn->pkt_type = hdev->esco_type & SCO_ESCO_MASK;
+			conn->pkt_type = (hdev->esco_type & SCO_ESCO_MASK) |
+					(hdev->esco_type & EDR_ESCO_MASK);
 		else
 			conn->pkt_type = hdev->pkt_type & SCO_PTYPE_MASK;
 		break;
 	case ESCO_LINK:
-		conn->pkt_type = hdev->esco_type;
+		conn->pkt_type = hdev->esco_type & ~EDR_ESCO_MASK;
 		break;
 	}
 
@@ -510,9 +491,7 @@ EXPORT_SYMBOL(hci_get_route);
 
 /* Create SCO, ACL or LE connection.
  * Device _must_ be locked */
-struct hci_conn *hci_connect(struct hci_dev *hdev, int type, bdaddr_t *dst,
-				__u8 sec_level, __u8 auth_type,
-				struct bt_sco_parameters *sco_parameters)
+struct hci_conn *hci_connect(struct hci_dev *hdev, int type, bdaddr_t *dst, __u8 sec_level, __u8 auth_type)
 {
 	struct hci_conn *acl;
 	struct hci_conn *sco;
@@ -577,8 +556,6 @@ struct hci_conn *hci_connect(struct hci_dev *hdev, int type, bdaddr_t *dst,
 
 	hci_conn_hold(sco);
 
-	sco->sco_parameters = sco_parameters;
-
 	if (acl->state == BT_CONNECTED &&
 			(sco->state == BT_OPEN || sco->state == BT_CLOSED)) {
 		acl->power_save = 1;
@@ -630,10 +607,6 @@ static int hci_conn_auth(struct hci_conn *conn, __u8 sec_level, __u8 auth_type)
 
 	if (!test_and_set_bit(HCI_CONN_AUTH_PEND, &conn->pend)) {
 		struct hci_cp_auth_requested cp;
-
-		/* encrypt must be pending if auth is also pending */
-		set_bit(HCI_CONN_ENCRYPT_PEND, &conn->pend);
-
 		cp.handle = cpu_to_le16(conn->handle);
 		hci_send_cmd(conn->hdev, HCI_OP_AUTH_REQUESTED,
 							sizeof(cp), &cp);
@@ -918,15 +891,6 @@ int hci_get_conn_list(void __user *arg)
 		(ci + n)->out   = c->out;
 		(ci + n)->state = c->state;
 		(ci + n)->link_mode = c->link_mode;
-		if (c->type == SCO_LINK) {
-			(ci + n)->mtu = hdev->sco_mtu;
-			(ci + n)->cnt = hdev->sco_cnt;
-			(ci + n)->pkts = hdev->sco_pkts;
-		} else {
-			(ci + n)->mtu = hdev->acl_mtu;
-			(ci + n)->cnt = hdev->acl_cnt;
-			(ci + n)->pkts = hdev->acl_pkts;
-		}
 		if (++n >= req.conn_num)
 			break;
 	}
@@ -963,15 +927,6 @@ int hci_get_conn_info(struct hci_dev *hdev, void __user *arg)
 		ci.out   = conn->out;
 		ci.state = conn->state;
 		ci.link_mode = conn->link_mode;
-		if (req.type == SCO_LINK) {
-			ci.mtu = hdev->sco_mtu;
-			ci.cnt = hdev->sco_cnt;
-			ci.pkts = hdev->sco_pkts;
-		} else {
-			ci.mtu = hdev->acl_mtu;
-			ci.cnt = hdev->acl_cnt;
-			ci.pkts = hdev->acl_pkts;
-		}
 	}
 	hci_dev_unlock_bh(hdev);
 
@@ -991,10 +946,8 @@ int hci_get_auth_info(struct hci_dev *hdev, void __user *arg)
 
 	hci_dev_lock_bh(hdev);
 	conn = hci_conn_hash_lookup_ba(hdev, ACL_LINK, &req.bdaddr);
-	if (conn) {
+	if (conn)
 		req.type = conn->auth_type;
-		req.sec_level = max(conn->sec_level, conn->pending_sec_level);
-	}
 	hci_dev_unlock_bh(hdev);
 
 	if (!conn)
