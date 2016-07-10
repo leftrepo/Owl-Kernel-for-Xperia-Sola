@@ -524,8 +524,10 @@ static int pty_unix98_ioctl(struct tty_struct *tty,
 static struct tty_struct *ptm_unix98_lookup(struct tty_driver *driver,
 		struct inode *ptm_inode, int idx)
 {
-	/* Master must be open via /dev/ptmx */
-	return ERR_PTR(-EIO);
+	struct tty_struct *tty = devpts_get_tty(ptm_inode, idx);
+	if (tty)
+		tty = tty->link;
+	return tty;
 }
 
 /**
@@ -681,7 +683,7 @@ static int ptmx_open(struct inode *inode, struct file *filp)
 
 	mutex_lock(&tty_mutex);
 	tty_lock();
-	tty = tty_init_dev(ptm_driver, index);
+	tty = tty_init_dev(ptm_driver, index, 1);
 	mutex_unlock(&tty_mutex);
 
 	if (IS_ERR(tty)) {
