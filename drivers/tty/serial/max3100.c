@@ -47,8 +47,6 @@
 #include <linux/serial.h>
 #include <linux/spi/spi.h>
 #include <linux/freezer.h>
-#include <linux/tty.h>
-#include <linux/tty_flip.h>
 
 #include <linux/serial_max3100.h>
 

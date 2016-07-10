@@ -38,8 +38,6 @@ source "drivers/staging/tty/Kconfig"
 
 source "drivers/staging/generic_serial/Kconfig"
 
-# source "drivers/staging/serial/Kconfig"
-
 source "drivers/staging/et131x/Kconfig"
 
 source "drivers/staging/slicoss/Kconfig"
