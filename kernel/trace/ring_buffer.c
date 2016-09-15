@@ -154,33 +154,10 @@ enum {
 
 static unsigned long ring_buffer_flags __read_mostly = RB_BUFFERS_ON;
 
+/* Used for individual buffers (after the counter) */
+#define RB_BUFFER_OFF		(1 << 20)
+
 #define BUF_PAGE_HDR_SIZE offsetof(struct buffer_data_page, data)
-
-/**
- * tracing_on - enable all tracing buffers
- *
- * This function enables all tracing buffers that may have been
- * disabled with tracing_off.
- */
-void tracing_on(void)
-{
-	set_bit(RB_BUFFERS_ON_BIT, &ring_buffer_flags);
-}
-EXPORT_SYMBOL_GPL(tracing_on);
-
-/**
- * tracing_off - turn off all tracing buffers
- *
- * This function stops all tracing buffers from recording data.
- * It does not disable any overhead the tracers themselves may
- * be causing. This function simply causes all recording to
- * the ring buffers to fail.
- */
-void tracing_off(void)
-{
-	clear_bit(RB_BUFFERS_ON_BIT, &ring_buffer_flags);
-}
-EXPORT_SYMBOL_GPL(tracing_off);
 
 /**
  * tracing_off_permanent - permanently disable ring buffers
@@ -192,15 +169,6 @@ void tracing_off_permanent(void)
 {
 	set_bit(RB_BUFFERS_DISABLED_BIT, &ring_buffer_flags);
 }
-
-/**
- * tracing_is_on - show state of ring buffers enabled
- */
-int tracing_is_on(void)
-{
-	return ring_buffer_flags == RB_BUFFERS_ON;
-}
-EXPORT_SYMBOL_GPL(tracing_is_on);
 
 #define RB_EVNT_HDR_SIZE (offsetof(struct ring_buffer_event, array))
 #define RB_ALIGNMENT		4U
@@ -488,12 +456,14 @@ struct ring_buffer_per_cpu {
 	struct buffer_page		*reader_page;
 	unsigned long			lost_events;
 	unsigned long			last_overrun;
+	local_t				entries_bytes;
 	local_t				commit_overrun;
 	local_t				overrun;
 	local_t				entries;
 	local_t				committing;
 	local_t				commits;
 	unsigned long			read;
+	unsigned long			read_bytes;
 	u64				write_stamp;
 	u64				read_stamp;
 };
@@ -1708,6 +1678,7 @@ rb_handle_head_page(struct ring_buffer_per_cpu *cpu_buffer,
 		 * the counters.
 		 */
 		local_add(entries, &cpu_buffer->overrun);
+		local_sub(BUF_PAGE_SIZE, &cpu_buffer->entries_bytes);
 
 		/*
 		 * The entries will be zeroed out when we move the
@@ -1862,6 +1833,9 @@ rb_reset_tail(struct ring_buffer_per_cpu *cpu_buffer,
 
 	event = __rb_page_index(tail_page, tail);
 	kmemcheck_annotate_bitfield(event, bitfield);
+
+	/* account for padding bytes */
+	local_add(BUF_PAGE_SIZE - tail, &cpu_buffer->entries_bytes);
 
 	/*
 	 * Save the original length to the meta data.
@@ -2054,6 +2028,9 @@ __rb_reserve_next(struct ring_buffer_per_cpu *cpu_buffer,
 	if (!tail)
 		tail_page->page->time_stamp = ts;
 
+	/* account for these added bytes */
+	local_add(length, &cpu_buffer->entries_bytes);
+
 	return event;
 }
 
@@ -2076,6 +2053,7 @@ rb_try_to_discard(struct ring_buffer_per_cpu *cpu_buffer,
 	if (bpage->page == (void *)addr && rb_page_write(bpage) == old_index) {
 		unsigned long write_mask =
 			local_read(&bpage->write) & ~RB_WRITE_MASK;
+		unsigned long event_length = rb_event_length(event);
 		/*
 		 * This is on the tail page. It is possible that
 		 * a write could come in and move the tail page
@@ -2085,8 +2063,11 @@ rb_try_to_discard(struct ring_buffer_per_cpu *cpu_buffer,
 		old_index += write_mask;
 		new_index += write_mask;
 		index = local_cmpxchg(&bpage->write, old_index, new_index);
-		if (index == old_index)
+		if (index == old_index) {
+			/* update counters */
+			local_sub(event_length, &cpu_buffer->entries_bytes);
 			return 1;
+		}
 	}
 
 	/* could not discard */
@@ -2606,6 +2587,63 @@ void ring_buffer_record_enable(struct ring_buffer *buffer)
 EXPORT_SYMBOL_GPL(ring_buffer_record_enable);
 
 /**
+ * ring_buffer_record_off - stop all writes into the buffer
+ * @buffer: The ring buffer to stop writes to.
+ *
+ * This prevents all writes to the buffer. Any attempt to write
+ * to the buffer after this will fail and return NULL.
+ *
+ * This is different than ring_buffer_record_disable() as
+ * it works like an on/off switch, where as the disable() verison
+ * must be paired with a enable().
+ */
+void ring_buffer_record_off(struct ring_buffer *buffer)
+{
+	unsigned int rd;
+	unsigned int new_rd;
+
+	do {
+		rd = atomic_read(&buffer->record_disabled);
+		new_rd = rd | RB_BUFFER_OFF;
+	} while (atomic_cmpxchg(&buffer->record_disabled, rd, new_rd) != rd);
+}
+EXPORT_SYMBOL_GPL(ring_buffer_record_off);
+
+/**
+ * ring_buffer_record_on - restart writes into the buffer
+ * @buffer: The ring buffer to start writes to.
+ *
+ * This enables all writes to the buffer that was disabled by
+ * ring_buffer_record_off().
+ *
+ * This is different than ring_buffer_record_enable() as
+ * it works like an on/off switch, where as the enable() verison
+ * must be paired with a disable().
+ */
+void ring_buffer_record_on(struct ring_buffer *buffer)
+{
+	unsigned int rd;
+	unsigned int new_rd;
+
+	do {
+		rd = atomic_read(&buffer->record_disabled);
+		new_rd = rd & ~RB_BUFFER_OFF;
+	} while (atomic_cmpxchg(&buffer->record_disabled, rd, new_rd) != rd);
+}
+EXPORT_SYMBOL_GPL(ring_buffer_record_on);
+
+/**
+ * ring_buffer_record_is_on - return true if the ring buffer can write
+ * @buffer: The ring buffer to see if write is enabled
+ *
+ * Returns true if the ring buffer is in a state that it accepts writes.
+ */
+int ring_buffer_record_is_on(struct ring_buffer *buffer)
+{
+	return !atomic_read(&buffer->record_disabled);
+}
+
+/**
  * ring_buffer_record_disable_cpu - stop all writes into the cpu_buffer
  * @buffer: The ring buffer to stop writes to.
  * @cpu: The CPU buffer to stop
@@ -2659,6 +2697,58 @@ rb_num_of_entries(struct ring_buffer_per_cpu *cpu_buffer)
 	return local_read(&cpu_buffer->entries) -
 		(local_read(&cpu_buffer->overrun) + cpu_buffer->read);
 }
+
+/**
+ * ring_buffer_oldest_event_ts - get the oldest event timestamp from the buffer
+ * @buffer: The ring buffer
+ * @cpu: The per CPU buffer to read from.
+ */
+unsigned long ring_buffer_oldest_event_ts(struct ring_buffer *buffer, int cpu)
+{
+	unsigned long flags;
+	struct ring_buffer_per_cpu *cpu_buffer;
+	struct buffer_page *bpage;
+	unsigned long ret;
+
+	if (!cpumask_test_cpu(cpu, buffer->cpumask))
+		return 0;
+
+	cpu_buffer = buffer->buffers[cpu];
+	raw_spin_lock_irqsave(&cpu_buffer->reader_lock, flags);
+	/*
+	 * if the tail is on reader_page, oldest time stamp is on the reader
+	 * page
+	 */
+	if (cpu_buffer->tail_page == cpu_buffer->reader_page)
+		bpage = cpu_buffer->reader_page;
+	else
+		bpage = rb_set_head_page(cpu_buffer);
+	ret = bpage->page->time_stamp;
+	raw_spin_unlock_irqrestore(&cpu_buffer->reader_lock, flags);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(ring_buffer_oldest_event_ts);
+
+/**
+ * ring_buffer_bytes_cpu - get the number of bytes consumed in a cpu buffer
+ * @buffer: The ring buffer
+ * @cpu: The per CPU buffer to read from.
+ */
+unsigned long ring_buffer_bytes_cpu(struct ring_buffer *buffer, int cpu)
+{
+	struct ring_buffer_per_cpu *cpu_buffer;
+	unsigned long ret;
+
+	if (!cpumask_test_cpu(cpu, buffer->cpumask))
+		return 0;
+
+	cpu_buffer = buffer->buffers[cpu];
+	ret = local_read(&cpu_buffer->entries_bytes) - cpu_buffer->read_bytes;
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(ring_buffer_bytes_cpu);
 
 /**
  * ring_buffer_entries_cpu - get the number of entries in a cpu buffer
@@ -2940,8 +3030,6 @@ rb_get_reader_page(struct ring_buffer_per_cpu *cpu_buffer)
 	 * Splice the empty reader page into the list around the head.
 	 */
 	reader = rb_set_head_page(cpu_buffer);
-	if (!reader)
-		goto out;
 	cpu_buffer->reader_page->list.next = rb_list_head(reader->list.next);
 	cpu_buffer->reader_page->list.prev = reader->list.prev;
 
@@ -3529,11 +3617,13 @@ rb_reset_cpu(struct ring_buffer_per_cpu *cpu_buffer)
 	cpu_buffer->reader_page->read = 0;
 
 	local_set(&cpu_buffer->commit_overrun, 0);
+	local_set(&cpu_buffer->entries_bytes, 0);
 	local_set(&cpu_buffer->overrun, 0);
 	local_set(&cpu_buffer->entries, 0);
 	local_set(&cpu_buffer->committing, 0);
 	local_set(&cpu_buffer->commits, 0);
 	cpu_buffer->read = 0;
+	cpu_buffer->read_bytes = 0;
 
 	cpu_buffer->write_stamp = 0;
 	cpu_buffer->read_stamp = 0;
@@ -3920,6 +4010,7 @@ int ring_buffer_read_page(struct ring_buffer *buffer,
 	} else {
 		/* update the entry counter */
 		cpu_buffer->read += rb_page_entries(reader);
+		cpu_buffer->read_bytes += BUF_PAGE_SIZE;
 
 		/* swap the pages */
 		rb_init_page(bpage);
@@ -3972,68 +4063,6 @@ int ring_buffer_read_page(struct ring_buffer *buffer,
 	return ret;
 }
 EXPORT_SYMBOL_GPL(ring_buffer_read_page);
-
-#ifdef CONFIG_TRACING
-static ssize_t
-rb_simple_read(struct file *filp, char __user *ubuf,
-	       size_t cnt, loff_t *ppos)
-{
-	unsigned long *p = filp->private_data;
-	char buf[64];
-	int r;
-
-	if (test_bit(RB_BUFFERS_DISABLED_BIT, p))
-		r = sprintf(buf, "permanently disabled\n");
-	else
-		r = sprintf(buf, "%d\n", test_bit(RB_BUFFERS_ON_BIT, p));
-
-	return simple_read_from_buffer(ubuf, cnt, ppos, buf, r);
-}
-
-static ssize_t
-rb_simple_write(struct file *filp, const char __user *ubuf,
-		size_t cnt, loff_t *ppos)
-{
-	unsigned long *p = filp->private_data;
-	unsigned long val;
-	int ret;
-
-	ret = kstrtoul_from_user(ubuf, cnt, 10, &val);
-	if (ret)
-		return ret;
-
-	if (val)
-		set_bit(RB_BUFFERS_ON_BIT, p);
-	else
-		clear_bit(RB_BUFFERS_ON_BIT, p);
-
-	(*ppos)++;
-
-	return cnt;
-}
-
-static const struct file_operations rb_simple_fops = {
-	.open		= tracing_open_generic,
-	.read		= rb_simple_read,
-	.write		= rb_simple_write,
-	.llseek		= default_llseek,
-};
-
-
-static __init int rb_init_debugfs(void)
-{
-	struct dentry *d_tracer;
-
-	d_tracer = tracing_init_dentry();
-
-	trace_create_file("tracing_on", 0644, d_tracer,
-			    &ring_buffer_flags, &rb_simple_fops);
-
-	return 0;
-}
-
-fs_initcall(rb_init_debugfs);
-#endif
 
 #ifdef CONFIG_HOTPLUG_CPU
 static int rb_cpu_notify(struct notifier_block *self,

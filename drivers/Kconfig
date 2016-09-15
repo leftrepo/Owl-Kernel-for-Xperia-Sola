@@ -135,5 +135,6 @@ source "drivers/clocksource/Kconfig"
 source "drivers/modem/Kconfig"
 
 source "drivers/rmi4/Kconfig"
-endmenu
 
+source "drivers/coresight/Kconfig"
+endmenu
