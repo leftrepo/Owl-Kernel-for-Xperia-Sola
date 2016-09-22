@@ -19,7 +19,6 @@
 #define __io(a)		__typesafe_io(a)
 
 #ifndef CONFIG_UX500_DEBUG_LAST_IO
-#define __mem_pci(a)	(a)
 #else
 extern void ux500_debug_last_io_save(void *pc, void __iomem *vaddr);
 
@@ -34,7 +33,6 @@ static inline void __iomem *__save_addr(void __iomem *p)
 	return p;
 }
 
-#define __mem_pci(a)	__save_addr((void __iomem *)(a))
 #endif /* CONFIG_UX500_DEBUG_LAST_IO */
 
 #endif /* __ASM_ARM_ARCH_IO_H */

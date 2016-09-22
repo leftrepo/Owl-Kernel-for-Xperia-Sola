@@ -941,6 +941,7 @@ config ARCH_U8500
 	select ARCH_REQUIRE_GPIOLIB
 	select HAVE_CLK
 	select ARCH_HAS_CPUFREQ
+	select NEED_MACH_IO_H
 	select NOMADIK_GPIO
 	select ARM_HAS_SG_CHAIN
 	select ARCH_HAS_PASR
