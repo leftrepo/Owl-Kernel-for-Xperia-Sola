@@ -1654,10 +1654,6 @@ SYSCALL_DEFINE4(epoll_ctl, int, epfd, int, op, int, fd,
 			list_add(&tfile->f_tfile_llink, &tfile_check_list);
 	}
 
-<<<<<<< HEAD
-=======
-
->>>>>>> d8805e6... epoll: fix spurious lockdep warnings
 	mutex_lock_nested(&ep->mtx, 0);
 
 	/*
