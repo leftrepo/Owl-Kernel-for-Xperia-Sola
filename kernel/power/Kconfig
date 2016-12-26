@@ -42,7 +42,7 @@ config WAKELOCK_STAT
 
 config USER_WAKELOCK
 	bool "Userspace wake locks"
-	depends on WAKELOCK
+	depends on PM_SLEEP
 	default y
 	---help---
 	  User-space wake lock api. Write "lockname" or "lockname timeout"
@@ -316,6 +316,10 @@ config PM_GENERIC_DOMAINS_RUNTIME
 	def_bool y
 	depends on PM_RUNTIME && PM_GENERIC_DOMAINS
 
+config CPU_PM
+	bool
+	depends on SUSPEND || CPU_IDLE
+
 config SUSPEND_TIME
 	bool "Log time spent in suspend"
 	---help---
@@ -333,7 +337,3 @@ config SEMC_FREEZE_TIMEOUT
 	  time window for the hardware watchdog (defined to 10 seconds in
 	  watchdog-kicker/kickdogd.c), or there is a risk of receiving a HWWD
 	  when some userspace process fails to freeze.
-
-config CPU_PM
-	bool
-	depends on SUSPEND || CPU_IDLE

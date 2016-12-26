@@ -21,10 +21,9 @@
 #include <linux/list.h>
 #include <linux/mm.h>
 #include <linux/slab.h>
+#include <linux/export.h>
 #include <linux/suspend.h>
-#include <linux/kthread.h>
 #include <linux/syscore_ops.h>
-#include <linux/ftrace.h>
 #include <linux/rtc.h>
 #include <trace/events/power.h>
 
@@ -39,10 +38,6 @@ const char *const pm_states[PM_SUSPEND_MAX] = {
 };
 
 static const struct platform_suspend_ops *suspend_ops;
-
-static struct completion second_cpu_complete = {1,
-	__WAIT_QUEUE_HEAD_INITIALIZER((second_cpu_complete).wait)
-};
 
 /**
  * suspend_set_ops - Set the global suspend method table.
@@ -221,7 +216,6 @@ int suspend_devices_and_enter(suspend_state_t state)
 			goto Close;
 	}
 	suspend_console();
-	ftrace_stop();
 	suspend_test_start();
 	error = dpm_suspend_start(PMSG_SUSPEND);
 	if (error) {
@@ -241,7 +235,6 @@ int suspend_devices_and_enter(suspend_state_t state)
 	suspend_test_start();
 	dpm_resume_end(PMSG_RESUME);
 	suspend_test_finish("resume devices");
-	ftrace_start();
 	resume_console();
  Close:
 	if (suspend_ops->end)
@@ -268,18 +261,6 @@ static void suspend_finish(void)
 	pm_restore_console();
 }
 
-static int plug_secondary_cpus(void *data)
-{
-	if (!(suspend_test(TEST_FREEZER) ||
-	      suspend_test(TEST_DEVICES) ||
-	      suspend_test(TEST_PLATFORM)))
-		enable_nonboot_cpus();
-
-	complete(&second_cpu_complete);
-
-	return 0;
-}
-
 /**
  * enter_state - Do common work needed to enter system sleep state.
  * @state: System sleep state to enter.
@@ -291,7 +272,6 @@ static int plug_secondary_cpus(void *data)
 static int enter_state(suspend_state_t state)
 {
 	int error;
-	struct task_struct *cpu_task;
 
 	if (!valid_state(state))
 		return -ENODEV;
@@ -317,11 +297,6 @@ static int enter_state(suspend_state_t state)
 	pr_debug("PM: Finishing wakeup.\n");
 	suspend_finish();
  Unlock:
-
-	cpu_task = kthread_run(plug_secondary_cpus,
-			       NULL, "cpu-plug");
-	BUG_ON(IS_ERR(cpu_task));
-
 	mutex_unlock(&pm_mutex);
 	return error;
 }
