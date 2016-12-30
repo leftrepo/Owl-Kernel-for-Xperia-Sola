@@ -1,166 +1,190 @@
-From b485d959244fa8460e8a66639dd86328c2c643bc Mon Sep 17 00:00:00 2001
-From: Colin Cross <ccross@android.com>
-Date: Wed, 7 Sep 2011 17:28:58 -0700
-Subject: [PATCH 056/722] mmc: core: host: only use wakelock for detect work
-
-There is no need to take a wakelock for delayed lazy disable
-work, it will be cancelled in the suspend handler and force
-disabled.  Only take the wakelock when the detect work is
-queued, and make sure to drop the wakelock if the work is
-cancelled.
-
-Change-Id: I1e507a5f98848954ea21d45e23b6192c3132a349
-Signed-off-by: Colin Cross <ccross@android.com>
----
- drivers/mmc/core/core.c  |   26 +++++++++++++-------------
- drivers/mmc/core/host.c  |    3 +++
- include/linux/mmc/host.h |    2 ++
- 3 files changed, 18 insertions(+), 13 deletions(-)
-
-diff --git a/drivers/mmc/core/core.c b/drivers/mmc/core/core.c
-index 297367a..812f3d9 100644
---- a/drivers/mmc/core/core.c
-+++ b/drivers/mmc/core/core.c
-@@ -53,7 +53,6 @@
- #define MMC_BKOPS_MAX_TIMEOUT	(4 * 60 * 1000) /* max time to wait in ms */
+diff --git a/drivers/staging/android/Kconfig b/drivers/staging/android/Kconfig
+index 43d17c27..5d3c237 100644
+--- a/drivers/staging/android/Kconfig
++++ b/drivers/staging/android/Kconfig
+@@ -76,6 +76,14 @@ config ANDROID_LOW_MEMORY_KILLER_AUTODETECT_OOM_ADJ_VALUES
+ 	  /sys/module/lowmemorykiller/parameters/adj and convert them
+ 	  to oom_score_adj values.
  
- static struct workqueue_struct *workqueue;
--static struct wake_lock mmc_delayed_work_wake_lock;
- static const unsigned freqs[] = { 400000, 300000, 200000, 100000 };
- 
- /*
-@@ -87,7 +86,6 @@ MODULE_PARM_DESC(
- static int mmc_schedule_delayed_work(struct delayed_work *work,
- 				     unsigned long delay)
- {
--	wake_lock(&mmc_delayed_work_wake_lock);
- 	return queue_delayed_work(workqueue, work, delay);
- }
- 
-@@ -1689,6 +1687,8 @@ void mmc_detect_change(struct mmc_host *host, unsigned long delay)
- 	spin_unlock_irqrestore(&host->lock, flags);
- #endif
- 	host->detect_change = 1;
++config ANDROID_LMK_ADJ_RBTREE
++	bool "Android Low Memory Killer: Red-Black Tree search"
++	depends on ANDROID_LOW_MEMORY_KILLER
++	default y
++	---help---
++	  Utilize RB Tree for walking the tasklist.. O(log n) vs O(n)
++	  much speedier for long task list!
 +
-+	wake_lock(&host->detect_wake_lock);
- 	mmc_schedule_delayed_work(&host->detect, delay);
+ source "drivers/staging/android/switch/Kconfig"
+ 
+ config ANDROID_INTF_ALARM_DEV
+diff --git a/drivers/staging/android/lowmemorykiller.c b/drivers/staging/android/lowmemorykiller.c
+index d1fa1e2..85dc811 100644
+--- a/drivers/staging/android/lowmemorykiller.c
++++ b/drivers/staging/android/lowmemorykiller.c
+@@ -250,6 +250,12 @@ void tune_lmk_param(int *other_free, int *other_file, struct shrink_control *sc)
+ 	}
  }
  
-@@ -2451,11 +2451,13 @@ void mmc_rescan(struct work_struct *work)
++#ifdef CONFIG_ANDROID_LMK_ADJ_RBTREE
++static struct task_struct *pick_next_from_adj_tree(struct task_struct *task);
++static struct task_struct *pick_first_task(void);
++static struct task_struct *pick_last_task(void);
++#endif
++
+ static DEFINE_MUTEX(scan_mutex);
  
-  out:
- 	if (extend_wakelock)
--		wake_lock_timeout(&mmc_delayed_work_wake_lock, HZ / 2);
-+		wake_lock_timeout(&host->detect_wake_lock, HZ / 2);
- 	else
--		wake_unlock(&mmc_delayed_work_wake_lock);
--	if (host->caps & MMC_CAP_NEEDS_POLL)
-+		wake_unlock(&host->detect_wake_lock);
-+	if (host->caps & MMC_CAP_NEEDS_POLL) {
-+		wake_lock(&host->detect_wake_lock);
- 		mmc_schedule_delayed_work(&host->detect, HZ);
-+	}
- }
+ static int lowmem_shrink(struct shrinker *s, struct shrink_control *sc)
+@@ -310,7 +316,13 @@ static int lowmem_shrink(struct shrinker *s, struct shrink_control *sc)
+ 	selected_oom_score_adj = min_score_adj;
  
- void mmc_start_host(struct mmc_host *host)
-@@ -2479,7 +2481,8 @@ void mmc_stop_host(struct mmc_host *host)
+ 	rcu_read_lock();
++#ifdef CONFIG_ANDROID_LMK_ADJ_RBTREE
++	for (tsk = pick_first_task();
++		tsk != pick_last_task();
++		tsk = pick_next_from_adj_tree(tsk)) {
++#else
+ 	for_each_process(tsk) {
++#endif
+ 		struct task_struct *p;
+ 		int oom_score_adj;
+ 
+@@ -338,7 +350,11 @@ static int lowmem_shrink(struct shrinker *s, struct shrink_control *sc)
+ 		oom_score_adj = p->signal->oom_score_adj;
+ 		if (oom_score_adj < min_score_adj) {
+ 			task_unlock(p);
++#ifdef CONFIG_ANDROID_LMK_ADJ_RBTREE
++			break;
++#else
+ 			continue;
++#endif
+ 		}
+ 		tasksize = get_mm_rss(p->mm);
+ 		task_unlock(p);
+@@ -346,7 +362,11 @@ static int lowmem_shrink(struct shrinker *s, struct shrink_control *sc)
+ 			continue;
+ 		if (selected) {
+ 			if (oom_score_adj < selected_oom_score_adj)
++#ifdef CONFIG_ANDROID_LMK_ADJ_RBTREE
++				break;
++#else
+ 				continue;
++#endif
+ 			if (oom_score_adj == selected_oom_score_adj &&
+ 			    tasksize <= selected_tasksize)
+ 				continue;
+@@ -498,6 +518,85 @@ static const struct kparam_array __param_arr_adj = {
+ };
  #endif
  
- 	host->rescan_disable = 1;
--	cancel_delayed_work_sync(&host->detect);
-+	if (cancel_delayed_work_sync(&host->detect))
-+		wake_unlock(&host->detect_wake_lock);
- 	mmc_flush_scheduled_work();
++#ifdef CONFIG_ANDROID_LMK_ADJ_RBTREE
++DEFINE_SPINLOCK(lmk_lock);
++struct rb_root tasks_scoreadj = RB_ROOT;
++void add_2_adj_tree(struct task_struct *task)
++{
++	struct rb_node **link = &tasks_scoreadj.rb_node;
++	struct rb_node *parent = NULL;
++	struct task_struct *task_entry;
++	s64 key = task->signal->oom_score_adj;
++	/*
++ * 	 * Find the right place in the rbtree:
++ * 	 	 */
++	spin_lock(&lmk_lock);
++	while (*link) {
++		parent = *link;
++		task_entry = rb_entry(parent, struct task_struct, adj_node);
++
++		if (key < task_entry->signal->oom_score_adj)
++			link = &parent->rb_right;
++		else
++			link = &parent->rb_left;
++	}
++
++	rb_link_node(&task->adj_node, parent, link);
++	rb_insert_color(&task->adj_node, &tasks_scoreadj);
++	spin_unlock(&lmk_lock);
++}
++
++void delete_from_adj_tree(struct task_struct *task)
++{
++	spin_lock(&lmk_lock);
++	rb_erase(&task->adj_node, &tasks_scoreadj);
++	spin_unlock(&lmk_lock);
++}
++
++
++static struct task_struct *pick_next_from_adj_tree(struct task_struct *task)
++{
++	struct rb_node *next;
++
++	spin_lock(&lmk_lock);
++	next = rb_next(&task->adj_node);
++	spin_unlock(&lmk_lock);
++
++	if (!next)
++		return NULL;
++
++	 return rb_entry(next, struct task_struct, adj_node);
++}
++
++static struct task_struct *pick_first_task(void)
++{
++	struct rb_node *left;
++
++	spin_lock(&lmk_lock);
++	left = rb_first(&tasks_scoreadj);
++	spin_unlock(&lmk_lock);
++
++	if (!left)
++		return NULL;
++
++	return rb_entry(left, struct task_struct, adj_node);
++}
++
++static struct task_struct *pick_last_task(void)
++{
++	struct rb_node *right;
++
++	spin_lock(&lmk_lock);
++	right = rb_last(&tasks_scoreadj);
++	spin_unlock(&lmk_lock);
++
++	if (!right)
++		return NULL;
++
++	return rb_entry(right, struct task_struct, adj_node);
++}
++#endif
++
+ module_param_named(cost, lowmem_shrinker.seeks, int, S_IRUGO | S_IWUSR);
+ #ifdef CONFIG_ANDROID_LOW_MEMORY_KILLER_AUTODETECT_OOM_ADJ_VALUES
+ __module_param_call(MODULE_PARAM_PREFIX, adj,
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index d6689b2..20716a3 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -1324,6 +1324,9 @@ struct task_struct {
+ #endif
  
- 	/* clear pm flags now and let card drivers set them as needed */
-@@ -2677,7 +2680,8 @@ int mmc_suspend_host(struct mmc_host *host)
- 	if (mmc_bus_needs_resume(host))
- 		return 0;
- 
--	cancel_delayed_work(&host->detect);
-+	if (cancel_delayed_work(&host->detect))
-+		wake_unlock(&host->detect_wake_lock);
- 	mmc_flush_scheduled_work();
- 
- 	mmc_bus_get(host);
-@@ -2800,7 +2804,8 @@ int mmc_pm_notify(struct notifier_block *notify_block,
- 		}
- 		host->rescan_disable = 1;
- 		spin_unlock_irqrestore(&host->lock, flags);
--		cancel_delayed_work_sync(&host->detect);
-+		if (cancel_delayed_work_sync(&host->detect))
-+			wake_unlock(&host->detect_wake_lock);
- 
- 		if (!host->bus_ops || host->bus_ops->suspend)
- 			break;
-@@ -2876,9 +2881,6 @@ static int __init mmc_init(void)
- 	if (!workqueue)
- 		return -ENOMEM;
- 
--	wake_lock_init(&mmc_delayed_work_wake_lock, WAKE_LOCK_SUSPEND,
--		       "mmc_delayed_work");
--
- 	ret = mmc_register_bus();
- 	if (ret)
- 		goto destroy_workqueue;
-@@ -2899,7 +2901,6 @@ unregister_bus:
- 	mmc_unregister_bus();
- destroy_workqueue:
- 	destroy_workqueue(workqueue);
--	wake_lock_destroy(&mmc_delayed_work_wake_lock);
- 
- 	return ret;
+ 	struct list_head tasks;
++#ifdef CONFIG_ANDROID_LMK_ADJ_RBTREE
++	struct rb_node adj_node;
++#endif
+ #ifdef CONFIG_SMP
+ 	struct plist_node pushable_tasks;
+ #endif
+@@ -1671,6 +1674,14 @@ static inline struct pid *task_tgid(struct task_struct *task)
+ 	return task->group_leader->pids[PIDTYPE_PID].pid;
  }
-@@ -2910,7 +2911,6 @@ static void __exit mmc_exit(void)
- 	mmc_unregister_host_class();
- 	mmc_unregister_bus();
- 	destroy_workqueue(workqueue);
--	wake_lock_destroy(&mmc_delayed_work_wake_lock);
- }
  
- subsys_initcall(mmc_init);
-diff --git a/drivers/mmc/core/host.c b/drivers/mmc/core/host.c
-index f5bb7c7..56dadd6 100644
---- a/drivers/mmc/core/host.c
-+++ b/drivers/mmc/core/host.c
-@@ -459,6 +459,8 @@ struct mmc_host *mmc_alloc_host(int extra, struct device *dev)
- 
- 	spin_lock_init(&host->lock);
- 	init_waitqueue_head(&host->wq);
-+	wake_lock_init(&host->detect_wake_lock, WAKE_LOCK_SUSPEND,
-+		kasprintf(GFP_KERNEL, "%s_detect", mmc_hostname(host)));
- 	INIT_DELAYED_WORK(&host->detect, mmc_rescan);
- #ifdef CONFIG_PM
- 	host->pm_notify.notifier_call = mmc_pm_notify;
-@@ -558,6 +560,7 @@ void mmc_free_host(struct mmc_host *host)
- 	spin_lock(&mmc_host_lock);
- 	idr_remove(&mmc_host_idr, host->index);
- 	spin_unlock(&mmc_host_lock);
-+	wake_lock_destroy(&host->detect_wake_lock);
- 
- 	put_device(&host->class_dev);
- }
-diff --git a/include/linux/mmc/host.h b/include/linux/mmc/host.h
-index d286d7e..66b4659 100644
---- a/include/linux/mmc/host.h
-+++ b/include/linux/mmc/host.h
-@@ -15,6 +15,7 @@
- #include <linux/sched.h>
- #include <linux/device.h>
- #include <linux/fault-inject.h>
-+#include <linux/wakelock.h>
- 
- #include <linux/mmc/core.h>
- #include <linux/mmc/pm.h>
-@@ -329,6 +330,7 @@ struct mmc_host {
- 	int			claim_cnt;	/* "claim" nesting count */
- 
- 	struct delayed_work	detect;
-+	struct wake_lock	detect_wake_lock;
- 	int			detect_change;	/* card detect flag */
- 	struct mmc_slot		slot;
- 
--- 
-1.7.9.5
-
++#ifdef CONFIG_ANDROID_LMK_ADJ_RBTREE
++extern void add_2_adj_tree(struct task_struct *task);
++extern void delete_from_adj_tree(struct task_struct *task);
++#else
++static inline void add_2_adj_tree(struct task_struct *task) { }
++static inline void delete_from_adj_tree(struct task_struct *task) { }
++#endif
++
+ /*
+  * Without tasklist or rcu lock it is not safe to dereference
+  * the result of task_pgrp/task_session even if task == current,
 
