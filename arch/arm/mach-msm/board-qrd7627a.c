@@ -46,6 +46,7 @@
 #include <mach/usbdiag.h>
 #include <mach/msm_memtypes.h>
 #include <mach/msm_serial_hs.h>
+#include <mach/msm_serial_pdata.h>
 #include <mach/pmic.h>
 #include <mach/socinfo.h>
 #include <mach/vreg.h>
@@ -61,6 +62,7 @@
 #include "pm-boot.h"
 #include "board-msm7x27a-regulator.h"
 #include "board-msm7627a.h"
+#include "platsmp.h"
 
 #define RESERVE_KERNEL_EBI1_SIZE	0x3A000
 #define MSM_RESERVE_AUDIO_SIZE	0x1F4000
@@ -82,14 +84,18 @@ static struct platform_device msm_wlan_ar6000_pm_device = {
 	.id             = -1,
 };
 
+static struct msm_serial_platform_data msm_8625_uart1_pdata = {
+	.userid		= 10,
+};
+
 static struct msm_gpio qup_i2c_gpios_io[] = {
 	{ GPIO_CFG(60, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_8MA),
 		"qup_scl" },
 	{ GPIO_CFG(61, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_8MA),
 		"qup_sda" },
-	{ GPIO_CFG(131, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_8MA),
+	{ GPIO_CFG(131, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
 		"qup_scl" },
-	{ GPIO_CFG(132, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_8MA),
+	{ GPIO_CFG(132, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
 		"qup_sda" },
 };
 
@@ -98,9 +104,9 @@ static struct msm_gpio qup_i2c_gpios_hw[] = {
 		"qup_scl" },
 	{ GPIO_CFG(61, 1, GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_8MA),
 		"qup_sda" },
-	{ GPIO_CFG(131, 2, GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_8MA),
+	{ GPIO_CFG(131, 2, GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
 		"qup_scl" },
-	{ GPIO_CFG(132, 2, GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_8MA),
+	{ GPIO_CFG(132, 2, GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
 		"qup_sda" },
 };
 
@@ -130,24 +136,24 @@ static struct msm_i2c_platform_data msm_gsbi1_qup_i2c_pdata = {
 	.msm_i2c_config_gpio	= gsbi_qup_i2c_gpio_config,
 };
 
-static struct msm_gpio i2c_gpio_config[] = {
+static struct msm_gpio msm8625q_i2c_gpio_config[] = {
 	{ GPIO_CFG(39, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_8MA),
 		"qup_scl" },
 	{ GPIO_CFG(36, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_8MA),
 		"qup_sda" },
 };
 
-static struct i2c_gpio_platform_data i2c_gpio_pdata = {
+static struct i2c_gpio_platform_data msm8625q_i2c_gpio_pdata = {
 	.scl_pin = 39,
 	.sda_pin = 36,
 	.udelay = 5, /* 100 Khz */
 };
 
-static struct platform_device msm_i2c_gpio = {
+static struct platform_device msm8625q_i2c_gpio = {
 	.name	= "i2c-gpio",
 	.id	= 2,
 	.dev	= {
-		.platform_data = &i2c_gpio_pdata,
+		.platform_data = &msm8625q_i2c_gpio_pdata,
 	}
 };
 
@@ -377,7 +383,7 @@ static struct msm_pm_platform_data
 					.idle_enabled = 0,
 					.suspend_enabled = 0,
 					.latency = 500,
-					.residency = 6000,
+					.residency = 500,
 	},
 
 	[MSM_PM_MODE(0, MSM_PM_SLEEP_MODE_WAIT_FOR_INTERRUPT)] = {
@@ -396,7 +402,7 @@ static struct msm_pm_platform_data
 					.idle_enabled = 0,
 					.suspend_enabled = 0,
 					.latency = 500,
-					.residency = 6000,
+					.residency = 500,
 	},
 
 	[MSM_PM_MODE(1, MSM_PM_SLEEP_MODE_WAIT_FOR_INTERRUPT)] = {
@@ -415,7 +421,7 @@ static struct msm_pm_platform_data
 					.idle_enabled = 0,
 					.suspend_enabled = 0,
 					.latency = 500,
-					.residency = 6000,
+					.residency = 500,
 	},
 
 	[MSM_PM_MODE(2, MSM_PM_SLEEP_MODE_WAIT_FOR_INTERRUPT)] = {
@@ -434,7 +440,7 @@ static struct msm_pm_platform_data
 					.idle_enabled = 0,
 					.suspend_enabled = 0,
 					.latency = 500,
-					.residency = 6000,
+					.residency = 500,
 	},
 
 	[MSM_PM_MODE(3, MSM_PM_SLEEP_MODE_WAIT_FOR_INTERRUPT)] = {
@@ -662,6 +668,10 @@ static struct platform_device qrd_vreg_gpio_ext_1p8v_sku3_1 __devinitdata = {
 /* Regulator configuration for the NCP6335D buck */
 struct regulator_consumer_supply ncp6335d_consumer_supplies[] = {
 	REGULATOR_SUPPLY("ncp6335d", NULL),
+	/* TO DO: NULL entry needs to be fixed once
+	 * we fix the cross-dependencies.
+	*/
+	REGULATOR_SUPPLY("vddx_cx", NULL),
 };
 
 static struct regulator_init_data ncp6335d_init_data = {
@@ -685,6 +695,7 @@ static struct ncp6335d_platform_data ncp6335d_pdata = {
 	.init_data = &ncp6335d_init_data,
 	.default_vsel = NCP6335D_VSEL0,
 	.slew_rate_ns = 166,
+	.sleep_enable = true,
 };
 
 static struct i2c_board_info i2c2_info[] __initdata = {
@@ -748,7 +759,6 @@ static struct platform_device *msm8625_evb_devices[] __initdata = {
 	&msm8625_device_smd,
 	&msm8625_gsbi0_qup_i2c_device,
 	&msm8625_gsbi1_qup_i2c_device,
-	&msm_i2c_gpio,  /* TODO: Make this specific to 8625q */
 	&msm8625_device_uart1,
 	&msm8625_device_uart_dm1,
 	&msm8625_device_otg,
@@ -797,10 +807,7 @@ static struct ion_co_heap_pdata co_ion_pdata = {
  * These heaps are listed in the order they will be allocated.
  * Don't swap the order unless you know what you are doing!
  */
-static struct ion_platform_data ion_pdata = {
-	.nr = MSM_ION_HEAP_NUM,
-	.has_outer_cache = 1,
-	.heaps = {
+struct ion_platform_heap qrd7627a_heaps[] = {
 		{
 			.id	= ION_SYSTEM_HEAP_ID,
 			.type	= ION_HEAP_TYPE_SYSTEM,
@@ -832,7 +839,12 @@ static struct ion_platform_data ion_pdata = {
 			.extra_data = (void *)&co_ion_pdata,
 		},
 #endif
-	}
+};
+
+static struct ion_platform_data ion_pdata = {
+	.nr = MSM_ION_HEAP_NUM,
+	.has_outer_cache = 1,
+	.heaps = qrd7627a_heaps,
 };
 
 static struct platform_device ion_dev = {
@@ -926,7 +938,7 @@ static void msmqrd_adsp_add_pdev(void)
 	}
 	rpc_adsp_pdev->prog = ADSP_RPC_PROG;
 
-	if (cpu_is_msm8625())
+	if (cpu_is_msm8625() || cpu_is_msm8625q())
 		rpc_adsp_pdev->pdev = msm8625_device_adsp;
 	else
 		rpc_adsp_pdev->pdev = msm_adsp_device;
@@ -951,13 +963,18 @@ static void __init msm8625_device_i2c_init(void)
 					= &msm_gsbi0_qup_i2c_pdata;
 	msm8625_gsbi1_qup_i2c_device.dev.platform_data
 					= &msm_gsbi1_qup_i2c_pdata;
-	if (machine_is_qrd_skud_prime()) {
-		for (i = 0 ; i < ARRAY_SIZE(i2c_gpio_config); i++) {
-			rc = gpio_tlmm_config(i2c_gpio_config[i].gpio_cfg,
+	if (machine_is_qrd_skud_prime() || cpu_is_msm8625q()) {
+		for (i = 0 ; i < ARRAY_SIZE(msm8625q_i2c_gpio_config); i++) {
+			rc = gpio_tlmm_config(
+					msm8625q_i2c_gpio_config[i].gpio_cfg,
 					GPIO_CFG_ENABLE);
 			if (rc)
 				pr_err("I2C-gpio tlmm config failed\n");
 		}
+		rc = platform_device_register(&msm8625q_i2c_gpio);
+		if (rc)
+			pr_err("%s: could not register i2c-gpio device: %d\n",
+						__func__, rc);
 	}
 }
 
@@ -994,6 +1011,7 @@ static void __init add_platform_devices(void)
 	if (machine_is_msm8625_evb() || machine_is_msm8625_qrd7()
 				|| machine_is_msm8625_evt()
 				|| machine_is_qrd_skud_prime()) {
+		msm8625_device_uart1.dev.platform_data = &msm_8625_uart1_pdata;
 		platform_add_devices(msm8625_evb_devices,
 				ARRAY_SIZE(msm8625_evb_devices));
 		platform_add_devices(qrd3_devices,
@@ -1033,7 +1051,7 @@ static void __init add_platform_devices(void)
 static void __init qrd7627a_uart1dm_config(void)
 {
 	msm_uart_dm1_pdata.wakeup_irq = gpio_to_irq(UART1DM_RX_GPIO);
-	if (cpu_is_msm8625())
+	if (cpu_is_msm8625() || cpu_is_msm8625q())
 		msm8625_device_uart_dm1.dev.platform_data =
 			&msm_uart_dm1_pdata;
 	else
@@ -1042,7 +1060,7 @@ static void __init qrd7627a_uart1dm_config(void)
 
 static void __init qrd7627a_otg_gadget(void)
 {
-	if (cpu_is_msm8625()) {
+	if (cpu_is_msm8625() || cpu_is_msm8625q()) {
 		msm_otg_pdata.swfi_latency = msm8625_pm_data
 		[MSM_PM_SLEEP_MODE_WAIT_FOR_INTERRUPT].latency;
 		msm8625_device_otg.dev.platform_data = &msm_otg_pdata;
@@ -1061,7 +1079,7 @@ static void __init qrd7627a_otg_gadget(void)
 static void __init msm_pm_init(void)
 {
 
-	if (!cpu_is_msm8625()) {
+	if (!cpu_is_msm8625() && !cpu_is_msm8625q()) {
 		msm_pm_set_platform_data(msm7627a_pm_data,
 				ARRAY_SIZE(msm7627a_pm_data));
 		BUG_ON(msm_pm_boot_init(&msm_pm_boot_pdata));
@@ -1080,7 +1098,7 @@ static void __init msm_qrd_init(void)
 	msm7627a_init_regulators();
 	msmqrd_adsp_add_pdev();
 
-	if (cpu_is_msm8625())
+	if (cpu_is_msm8625() || cpu_is_msm8625q())
 		msm8625_device_i2c_init();
 	else
 		msm7627a_device_i2c_init();
@@ -1164,6 +1182,7 @@ MACHINE_START(MSM8625_EVB, "QRD MSM8625 EVB")
 	.timer		= &msm_timer,
 	.init_early	= qrd7627a_init_early,
 	.handle_irq	= gic_handle_irq,
+	.smp		= &msm8625_smp_ops,
 MACHINE_END
 MACHINE_START(MSM8625_QRD7, "QRD MSM8625 QRD7")
 	.atag_offset	= 0x100,
@@ -1174,6 +1193,7 @@ MACHINE_START(MSM8625_QRD7, "QRD MSM8625 QRD7")
 	.timer		= &msm_timer,
 	.init_early	= qrd7627a_init_early,
 	.handle_irq	= gic_handle_irq,
+	.smp		= &msm8625_smp_ops,
 MACHINE_END
 MACHINE_START(MSM8625_EVT, "QRD MSM8625 EVT")
 	.atag_offset	= 0x100,
@@ -1184,6 +1204,7 @@ MACHINE_START(MSM8625_EVT, "QRD MSM8625 EVT")
 	.timer		= &msm_timer,
 	.init_early	= qrd7627a_init_early,
 	.handle_irq	= gic_handle_irq,
+	.smp		= &msm8625_smp_ops,
 MACHINE_END
 MACHINE_START(QRD_SKUD_PRIME, "QRD MSM8625 SKUD PRIME")
 	.atag_offset	= 0x100,
@@ -1194,4 +1215,5 @@ MACHINE_START(QRD_SKUD_PRIME, "QRD MSM8625 SKUD PRIME")
 	.timer		= &msm_timer,
 	.init_early	= qrd7627a_init_early,
 	.handle_irq	= gic_handle_irq,
+	.smp		= &msm8625_smp_ops,
 MACHINE_END

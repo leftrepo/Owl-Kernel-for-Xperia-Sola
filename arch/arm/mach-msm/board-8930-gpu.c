@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -88,6 +88,12 @@ static struct resource kgsl_3d0_resources[] = {
 	{
 		.name = KGSL_3D0_REG_MEMORY,
 		.start = 0x04300000, /* GFX3D address */
+		.end = 0x0430ffff,
+		.flags = IORESOURCE_MEM,
+	},
+	{
+		.name = KGSL_3D0_SHADER_MEMORY,
+		.start = 0x04310000,
 		.end = 0x0431ffff,
 		.flags = IORESOURCE_MEM,
 	},
@@ -139,8 +145,7 @@ static struct kgsl_device_platform_data kgsl_3d0_pdata = {
 	.num_levels = 4,
 	.set_grp_async = NULL,
 	.idle_timeout = HZ/12,
-	.nap_allowed = true,
-	.strtstp_sleepwake = true,
+	.strtstp_sleepwake = false,
 	.clk_map = KGSL_CLK_CORE | KGSL_CLK_IFACE | KGSL_CLK_MEM_IFACE,
 #ifdef CONFIG_MSM_BUS_SCALING
 	.bus_scale_table = &grp3d_bus_scale_pdata,
@@ -167,8 +172,10 @@ void __init msm8930_init_gpu(void)
 
 	if (cpu_is_msm8930aa())
 		kgsl_3d0_pdata.pwrlevel[0].gpu_freq = 450000000;
-	else if (cpu_is_msm8930ab())
+	else if (cpu_is_msm8930ab()) {
 		kgsl_3d0_pdata.pwrlevel[0].gpu_freq = 500000000;
+		grp3d_max_vectors[0].ib = KGSL_CONVERT_TO_MBPS(4800);
+	}
 
 	/* Set up the chip ID based on the SoC version */
 

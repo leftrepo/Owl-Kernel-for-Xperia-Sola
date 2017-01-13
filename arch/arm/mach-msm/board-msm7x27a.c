@@ -58,6 +58,7 @@
 #include <mach/socinfo.h>
 #include "pm-boot.h"
 #include "board-msm7627a.h"
+#include "platsmp.h"
 
 #define RESERVE_KERNEL_EBI1_SIZE	0x3A000
 #define MSM_RESERVE_AUDIO_SIZE	0x1F4000
@@ -403,7 +404,7 @@ static struct msm_pm_platform_data
 					.idle_enabled = 0,
 					.suspend_enabled = 0,
 					.latency = 500,
-					.residency = 6000,
+					.residency = 500,
 	},
 
 	[MSM_PM_MODE(0, MSM_PM_SLEEP_MODE_WAIT_FOR_INTERRUPT)] = {
@@ -422,7 +423,7 @@ static struct msm_pm_platform_data
 					.idle_enabled = 0,
 					.suspend_enabled = 0,
 					.latency = 500,
-					.residency = 6000,
+					.residency = 500,
 	},
 
 	[MSM_PM_MODE(1, MSM_PM_SLEEP_MODE_WAIT_FOR_INTERRUPT)] = {
@@ -441,7 +442,7 @@ static struct msm_pm_platform_data
 					.idle_enabled = 0,
 					.suspend_enabled = 0,
 					.latency = 500,
-					.residency = 6000,
+					.residency = 500,
 	},
 
 	[MSM_PM_MODE(2, MSM_PM_SLEEP_MODE_WAIT_FOR_INTERRUPT)] = {
@@ -460,7 +461,7 @@ static struct msm_pm_platform_data
 					.idle_enabled = 0,
 					.suspend_enabled = 0,
 					.latency = 500,
-					.residency = 6000,
+					.residency = 500,
 	},
 
 	[MSM_PM_MODE(3, MSM_PM_SLEEP_MODE_WAIT_FOR_INTERRUPT)] = {
@@ -767,10 +768,7 @@ static struct ion_co_heap_pdata co_ion_pdata = {
  * These heaps are listed in the order they will be allocated.
  * Don't swap the order unless you know what you are doing!
  */
-static struct ion_platform_data ion_pdata = {
-	.nr = MSM_ION_HEAP_NUM,
-	.has_outer_cache = 1,
-	.heaps = {
+struct ion_platform_heap msm7627a_heaps[] = {
 		{
 			.id	= ION_SYSTEM_HEAP_ID,
 			.type	= ION_HEAP_TYPE_SYSTEM,
@@ -802,7 +800,12 @@ static struct ion_platform_data ion_pdata = {
 			.extra_data = (void *)&co_ion_pdata,
 		},
 #endif
-	}
+};
+
+static struct ion_platform_data ion_pdata = {
+	.nr = MSM_ION_HEAP_NUM,
+	.has_outer_cache = 1,
+	.heaps = msm7627a_heaps,
 };
 
 static struct platform_device ion_dev = {
@@ -952,7 +955,7 @@ static void msm_adsp_add_pdev(void)
 	}
 	rpc_adsp_pdev->prog = ADSP_RPC_PROG;
 
-	if (cpu_is_msm8625())
+	if (cpu_is_msm8625() || cpu_is_msm8625q())
 		rpc_adsp_pdev->pdev = msm8625_device_adsp;
 	else
 		rpc_adsp_pdev->pdev = msm_adsp_device;
@@ -1029,7 +1032,7 @@ static void __init msm7x27a_uartdm_config(void)
 {
 	msm7x27a_cfg_uart2dm_serial();
 	msm_uart_dm1_pdata.wakeup_irq = gpio_to_irq(UART1DM_RX_GPIO);
-	if (cpu_is_msm8625())
+	if (cpu_is_msm8625() || cpu_is_msm8625q())
 		msm8625_device_uart_dm1.dev.platform_data =
 			&msm_uart_dm1_pdata;
 	else
@@ -1038,7 +1041,7 @@ static void __init msm7x27a_uartdm_config(void)
 
 static void __init msm7x27a_otg_gadget(void)
 {
-	if (cpu_is_msm8625()) {
+	if (cpu_is_msm8625() || cpu_is_msm8625q()) {
 		msm_otg_pdata.swfi_latency =
 		msm8625_pm_data[MSM_PM_SLEEP_MODE_WAIT_FOR_INTERRUPT].latency;
 		msm8625_device_otg.dev.platform_data = &msm_otg_pdata;
@@ -1078,7 +1081,7 @@ static void __init msm7x2x_init(void)
 	/* Initialize regulators first so that other devices can use them */
 	msm7x27a_init_regulators();
 	msm_adsp_add_pdev();
-	if (cpu_is_msm8625())
+	if (cpu_is_msm8625() || cpu_is_msm8625q())
 		msm8625_device_i2c_init();
 	else
 		msm7x27a_device_i2c_init();
@@ -1171,6 +1174,7 @@ MACHINE_START(MSM8625_RUMI3, "QCT MSM8625 RUMI3")
 	.init_machine   = msm8625_rumi3_init,
 	.timer          = &msm_timer,
 	.handle_irq	= gic_handle_irq,
+	.smp		= &msm8625_smp_ops,
 MACHINE_END
 MACHINE_START(MSM8625_SURF, "QCT MSM8625 SURF")
 	.atag_offset    = 0x100,
@@ -1181,6 +1185,7 @@ MACHINE_START(MSM8625_SURF, "QCT MSM8625 SURF")
 	.timer          = &msm_timer,
 	.init_early     = msm7x2x_init_early,
 	.handle_irq	= gic_handle_irq,
+	.smp		= &msm8625_smp_ops,
 MACHINE_END
 MACHINE_START(MSM8625_FFA, "QCT MSM8625 FFA")
 	.atag_offset    = 0x100,
@@ -1191,4 +1196,5 @@ MACHINE_START(MSM8625_FFA, "QCT MSM8625 FFA")
 	.timer          = &msm_timer,
 	.init_early     = msm7x2x_init_early,
 	.handle_irq	= gic_handle_irq,
+	.smp		= &msm8625_smp_ops,
 MACHINE_END

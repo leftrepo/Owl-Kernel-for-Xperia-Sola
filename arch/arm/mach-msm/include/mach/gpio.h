@@ -16,7 +16,7 @@
 #ifndef __ASM_ARCH_MSM_GPIO_H
 #define __ASM_ARCH_MSM_GPIO_H
 
-#define ARCH_NR_GPIOS 512
+#define ARCH_NR_GPIOS 1024
 
 #include <linux/interrupt.h>
 #include <asm-generic/gpio.h>
@@ -38,6 +38,11 @@ extern struct irq_chip msm_gpio_irq_extn;
 struct msm_gpio {
 	u32 gpio_cfg;
 	const char *label;
+};
+
+struct msm_gpio_pdata {
+	int ngpio;
+	int direct_connect_irqs;
 };
 
 /**

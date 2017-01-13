@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2012, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -19,8 +19,8 @@
 #include <linux/gpio.h>
 #include <linux/coresight.h>
 #include <asm/clkdev.h>
+#include <mach/gpio.h>
 #include <mach/kgsl.h>
-#include <linux/android_pmem.h>
 #include <mach/irqs-8960.h>
 #include <mach/dma.h>
 #include <linux/dma-mapping.h>
@@ -52,6 +52,7 @@
 #include <mach/msm_dcvs.h>
 #include <mach/iommu_domains.h>
 #include <mach/socinfo.h>
+#include "pm.h"
 
 #ifdef CONFIG_MSM_MPM
 #include <mach/mpm.h>
@@ -115,11 +116,18 @@ static struct resource msm8960_resources_pccntr[] = {
 	},
 };
 
-struct platform_device msm8960_pc_cntr = {
-	.name		= "pc-cntr",
+static struct msm_pm_init_data_type msm_pm_data = {
+	.retention_calls_tz = true,
+};
+
+struct platform_device msm8960_pm_8x60 = {
+	.name		= "pm-8x60",
 	.id		= -1,
 	.num_resources	= ARRAY_SIZE(msm8960_resources_pccntr),
 	.resource	= msm8960_resources_pccntr,
+	.dev = {
+		.platform_data = &msm_pm_data,
+	},
 };
 
 static struct resource resources_otg[] = {
@@ -1066,6 +1074,37 @@ static struct resource msm_device_vidc_resources[] = {
 	},
 };
 
+int64_t vidc_v4l2_ns_iommu_mapping[] = {-1, -1};
+int64_t vidc_v4l2_cp_iommu_mapping[] = {-1, -1};
+int64_t *vidc_v4l2_iommu_mappings[] = {
+	[MSM_VIDC_V4L2_IOMMU_MAP_NS] = vidc_v4l2_ns_iommu_mapping,
+	[MSM_VIDC_V4L2_IOMMU_MAP_CP] = vidc_v4l2_cp_iommu_mapping,
+};
+
+int64_t vidc_v4l2_load_1[] = {-1, -1};
+int64_t vidc_v4l2_load_2[] = {-1, -1};
+int64_t *vidc_v4l2_load_table[] = {
+	vidc_v4l2_load_1,
+	vidc_v4l2_load_2,
+};
+
+static struct msm_vidc_v4l2_platform_data vidc_v4l2_plaform_data = {
+	.iommu_table = vidc_v4l2_iommu_mappings,
+	.num_iommu_table = 2,
+	.load_table = vidc_v4l2_load_table,
+	.num_load_table = 2,
+	.max_load = 800*480*30/256,
+};
+
+struct platform_device msm_device_vidc_v4l2 = {
+	.name = "msm_vidc_v4l2",
+	.id = 0,
+	.num_resources = 0,
+	.dev = {
+		.platform_data = &vidc_v4l2_plaform_data,
+	},
+};
+
 struct msm_vidc_platform_data vidc_platform_data = {
 #ifdef CONFIG_MSM_BUS_SCALING
 	.vidc_bus_client_pdata = &vidc_bus_client_data,
@@ -1662,6 +1701,19 @@ struct platform_device msm_device_smd = {
 struct platform_device msm_device_bam_dmux = {
 	.name		= "BAM_RMNT",
 	.id		= -1,
+};
+
+static struct msm_pm_sleep_status_data msm_pm_slp_sts_data = {
+	.base_addr = MSM_ACC0_BASE + 0x08,
+	.cpu_offset = MSM_ACC1_BASE - MSM_ACC0_BASE,
+	.mask = 1UL << 13,
+};
+struct platform_device msm8960_cpu_slp_status = {
+	.name		= "cpu_slp_status",
+	.id		= -1,
+	.dev = {
+		.platform_data = &msm_pm_slp_sts_data,
+	},
 };
 
 static struct msm_watchdog_pdata msm_watchdog_pdata = {
@@ -2458,6 +2510,11 @@ struct platform_device msm_pcm_afe = {
 	.id	= -1,
 };
 
+struct platform_device msm_fm_loopback = {
+	.name	= "msm-pcm-loopback",
+	.id	= -1,
+};
+
 static struct fs_driver_data gfx2d0_fs_data = {
 	.clks = (struct fs_clk_data[]){
 		{ .name = "core_clk" },
@@ -2483,6 +2540,17 @@ static struct fs_driver_data gfx3d_fs_data = {
 		{ 0 }
 	},
 	.bus_port0 = MSM_BUS_MASTER_GRAPHICS_3D,
+};
+
+static struct fs_driver_data gfx3d_fs_data_8960ab = {
+	.clks = (struct fs_clk_data[]){
+		{ .name = "core_clk", .reset_rate = 27000000 },
+		{ .name = "iface_clk" },
+		{ .name = "bus_clk" },
+		{ 0 }
+	},
+	.bus_port0 = MSM_BUS_MASTER_GRAPHICS_3D,
+	.bus_port1 = MSM_BUS_MASTER_GRAPHICS_3D_PORT1,
 };
 
 static struct fs_driver_data ijpeg_fs_data = {
@@ -2583,7 +2651,7 @@ struct platform_device *msm8960ab_footswitch[] __initdata = {
 	FS_8X60(FS_IJPEG,  "vdd",	"msm_gemini.0",	&ijpeg_fs_data),
 	FS_8X60(FS_VFE,    "vdd",	"msm_vfe.0",	&vfe_fs_data),
 	FS_8X60(FS_VPE,    "vdd",	"msm_vpe.0",	&vpe_fs_data),
-	FS_8X60(FS_GFX3D,  "vdd",	"kgsl-3d0.0",	&gfx3d_fs_data),
+	FS_8X60(FS_GFX3D,  "vdd",	"kgsl-3d0.0",	&gfx3d_fs_data_8960ab),
 	FS_8X60(FS_VED,    "vdd",	"msm_vidc.0",	&ved_fs_data_8960ab),
 };
 unsigned msm8960ab_num_footswitch __initdata = ARRAY_SIZE(msm8960ab_footswitch);
@@ -3019,7 +3087,7 @@ static struct msm_dcvs_core_info grp3d_core_info = {
 		.ss_win_size_min_us		= 1000000,
 		.ss_win_size_max_us		= 1000000,
 		.ss_util_pct			= 95,
-		.ss_iobusy_conv			= 100,
+		.ss_no_corr_below_freq		= 0,
 	},
 	.energy_coeffs	= {
 		.active_coeff_a		= 2492,
@@ -3056,7 +3124,7 @@ static struct msm_dcvs_core_info grp2d_core_info = {
 		.ss_win_size_min_us		= 1000000,
 		.ss_win_size_max_us		= 1000000,
 		.ss_util_pct			= 95,
-		.ss_iobusy_conv			= 100,
+		.ss_no_corr_below_freq		= 0,
 	},
 	.energy_coeffs	= {
 		.active_coeff_a		= 2492,
@@ -3120,6 +3188,81 @@ static struct msm_bus_vectors grp3d_max_vectors[] = {
 	},
 };
 
+struct msm_bus_vectors grp3d_init_vectors_1[] = {
+	{
+		.src = MSM_BUS_MASTER_GRAPHICS_3D,
+		.dst = MSM_BUS_SLAVE_EBI_CH0,
+		.ab = 0,
+		.ib = 0,
+	},
+	{
+		.src = MSM_BUS_MASTER_GRAPHICS_3D_PORT1,
+		.dst = MSM_BUS_SLAVE_EBI_CH0,
+		.ab = 0,
+		.ib = 0,
+	},
+};
+
+struct msm_bus_vectors grp3d_low_vectors_1[] = {
+	{
+		.src = MSM_BUS_MASTER_GRAPHICS_3D,
+		.dst = MSM_BUS_SLAVE_EBI_CH0,
+		.ab = 0,
+		.ib = KGSL_CONVERT_TO_MBPS(1000),
+	},
+	{
+		.src = MSM_BUS_MASTER_GRAPHICS_3D_PORT1,
+		.dst = MSM_BUS_SLAVE_EBI_CH0,
+		.ab = 0,
+		.ib = KGSL_CONVERT_TO_MBPS(1000),
+	},
+};
+
+struct msm_bus_vectors grp3d_nominal_low_vectors_1[] = {
+	{
+		.src = MSM_BUS_MASTER_GRAPHICS_3D,
+		.dst = MSM_BUS_SLAVE_EBI_CH0,
+		.ab = 0,
+		.ib = KGSL_CONVERT_TO_MBPS(2048),
+	},
+	{
+		.src = MSM_BUS_MASTER_GRAPHICS_3D_PORT1,
+		.dst = MSM_BUS_SLAVE_EBI_CH0,
+		.ab = 0,
+		.ib = KGSL_CONVERT_TO_MBPS(2048),
+	},
+};
+
+struct msm_bus_vectors grp3d_nominal_high_vectors_1[] = {
+	{
+		.src = MSM_BUS_MASTER_GRAPHICS_3D,
+		.dst = MSM_BUS_SLAVE_EBI_CH0,
+		.ab = 0,
+		.ib = KGSL_CONVERT_TO_MBPS(2656),
+	},
+	{
+		.src = MSM_BUS_MASTER_GRAPHICS_3D_PORT1,
+		.dst = MSM_BUS_SLAVE_EBI_CH0,
+		.ab = 0,
+		.ib = KGSL_CONVERT_TO_MBPS(2656),
+	},
+};
+
+struct msm_bus_vectors grp3d_max_vectors_1[] = {
+	{
+		.src = MSM_BUS_MASTER_GRAPHICS_3D,
+		.dst = MSM_BUS_SLAVE_EBI_CH0,
+		.ab = 0,
+		.ib = KGSL_CONVERT_TO_MBPS(3968),
+	},
+	{
+		.src = MSM_BUS_MASTER_GRAPHICS_3D_PORT1,
+		.dst = MSM_BUS_SLAVE_EBI_CH0,
+		.ab = 0,
+		.ib = KGSL_CONVERT_TO_MBPS(3968),
+	},
+};
+
 static struct msm_bus_paths grp3d_bus_scale_usecases[] = {
 	{
 		ARRAY_SIZE(grp3d_init_vectors),
@@ -3143,9 +3286,38 @@ static struct msm_bus_paths grp3d_bus_scale_usecases[] = {
 	},
 };
 
+struct msm_bus_paths grp3d_bus_scale_usecases_1[] = {
+	{
+		ARRAY_SIZE(grp3d_init_vectors_1),
+		grp3d_init_vectors_1,
+	},
+	{
+		ARRAY_SIZE(grp3d_low_vectors_1),
+		grp3d_low_vectors_1,
+	},
+	{
+		ARRAY_SIZE(grp3d_nominal_low_vectors_1),
+		grp3d_nominal_low_vectors_1,
+	},
+	{
+		ARRAY_SIZE(grp3d_nominal_high_vectors_1),
+		grp3d_nominal_high_vectors_1,
+	},
+	{
+		ARRAY_SIZE(grp3d_max_vectors_1),
+		grp3d_max_vectors_1,
+	},
+};
+
 static struct msm_bus_scale_pdata grp3d_bus_scale_pdata = {
 	grp3d_bus_scale_usecases,
 	ARRAY_SIZE(grp3d_bus_scale_usecases),
+	.name = "grp3d",
+};
+
+struct msm_bus_scale_pdata grp3d_bus_scale_pdata_ab = {
+	grp3d_bus_scale_usecases_1,
+	ARRAY_SIZE(grp3d_bus_scale_usecases_1),
 	.name = "grp3d",
 };
 
@@ -3246,7 +3418,30 @@ struct msm_bus_scale_pdata grp2d1_bus_scale_pdata = {
 };
 #endif
 
-static struct resource kgsl_3d0_resources[] = {
+struct resource kgsl_3d0_resources_8960ab[] = {
+	{
+		.name = KGSL_3D0_REG_MEMORY,
+		.start = 0x04300000, /* GFX3D address */
+		.end = 0x0430ffff,
+		.flags = IORESOURCE_MEM,
+	},
+	{
+		.name = KGSL_3D0_SHADER_MEMORY,
+		.start = 0x04310000, /* Shader Mem Address (8960AB) */
+		.end = 0x0431ffff,
+		.flags = IORESOURCE_MEM,
+	},
+	{
+		.name = KGSL_3D0_IRQ,
+		.start = GFX3D_IRQ,
+		.end = GFX3D_IRQ,
+		.flags = IORESOURCE_IRQ,
+	},
+};
+
+int kgsl_num_resources_8960ab = ARRAY_SIZE(kgsl_3d0_resources_8960ab);
+
+static struct resource kgsl_3d0_resources_8960[] = {
 	{
 		.name = KGSL_3D0_REG_MEMORY,
 		.start = 0x04300000, /* GFX3D address */
@@ -3317,7 +3512,6 @@ static struct kgsl_device_platform_data kgsl_3d0_pdata = {
 	.num_levels = ARRAY_SIZE(grp3d_freq) + 1,
 	.set_grp_async = NULL,
 	.idle_timeout = HZ/12,
-	.nap_allowed = true,
 	.clk_map = KGSL_CLK_CORE | KGSL_CLK_IFACE | KGSL_CLK_MEM_IFACE,
 #ifdef CONFIG_MSM_BUS_SCALING
 	.bus_scale_table = &grp3d_bus_scale_pdata,
@@ -3330,8 +3524,8 @@ static struct kgsl_device_platform_data kgsl_3d0_pdata = {
 struct platform_device msm_kgsl_3d0 = {
 	.name = "kgsl-3d0",
 	.id = 0,
-	.num_resources = ARRAY_SIZE(kgsl_3d0_resources),
-	.resource = kgsl_3d0_resources,
+	.num_resources = ARRAY_SIZE(kgsl_3d0_resources_8960),
+	.resource = kgsl_3d0_resources_8960,
 	.dev = {
 		.platform_data = &kgsl_3d0_pdata,
 	},
@@ -3384,7 +3578,6 @@ static struct kgsl_device_platform_data kgsl_2d0_pdata = {
 	.num_levels = ARRAY_SIZE(grp2d_freq) + 1,
 	.set_grp_async = NULL,
 	.idle_timeout = HZ/5,
-	.nap_allowed = true,
 	.clk_map = KGSL_CLK_CORE | KGSL_CLK_IFACE,
 #ifdef CONFIG_MSM_BUS_SCALING
 	.bus_scale_table = &grp2d0_bus_scale_pdata,
@@ -3451,7 +3644,6 @@ static struct kgsl_device_platform_data kgsl_2d1_pdata = {
 	.num_levels = ARRAY_SIZE(grp2d_freq) + 1,
 	.set_grp_async = NULL,
 	.idle_timeout = HZ/5,
-	.nap_allowed = true,
 	.clk_map = KGSL_CLK_CORE | KGSL_CLK_IFACE,
 #ifdef CONFIG_MSM_BUS_SCALING
 	.bus_scale_table = &grp2d1_bus_scale_pdata,
@@ -3771,8 +3963,8 @@ static struct msm_rpm_log_platform_data msm_rpm_log_pdata = {
 		[MSM_RPM_LOG_PAGE_BUFFER]  = 0x000000A0,
 	},
 	.phys_size = SZ_8K,
-	.log_len = 4096,		  /* log's buffer length in bytes */
-	.log_len_mask = (4096 >> 2) - 1,  /* length mask in units of u32 */
+	.log_len = 6144,		  /* log's buffer length in bytes */
+	.log_len_mask = (6144 >> 2) - 1,  /* length mask in units of u32 */
 };
 
 struct platform_device msm8960_rpm_log_device = {
@@ -3915,6 +4107,7 @@ struct platform_device msm_dsps_device = {
 
 static struct resource coresight_tpiu_resources[] = {
 	{
+		.name  = "tpiu-base",
 		.start = CORESIGHT_TPIU_PHYS_BASE,
 		.end   = CORESIGHT_TPIU_PHYS_BASE + SZ_4K - 1,
 		.flags = IORESOURCE_MEM,
@@ -3940,6 +4133,7 @@ struct platform_device coresight_tpiu_device = {
 
 static struct resource coresight_etb_resources[] = {
 	{
+		.name  = "etb-base",
 		.start = CORESIGHT_ETB_PHYS_BASE,
 		.end   = CORESIGHT_ETB_PHYS_BASE + SZ_4K - 1,
 		.flags = IORESOURCE_MEM,
@@ -3966,6 +4160,7 @@ struct platform_device coresight_etb_device = {
 
 static struct resource coresight_funnel_resources[] = {
 	{
+		.name  = "funnel-base",
 		.start = CORESIGHT_FUNNEL_PHYS_BASE,
 		.end   = CORESIGHT_FUNNEL_PHYS_BASE + SZ_4K - 1,
 		.flags = IORESOURCE_MEM,
@@ -3998,11 +4193,13 @@ struct platform_device coresight_funnel_device = {
 
 static struct resource coresight_stm_resources[] = {
 	{
+		.name  = "stm-base",
 		.start = CORESIGHT_STM_PHYS_BASE,
 		.end   = CORESIGHT_STM_PHYS_BASE + SZ_4K - 1,
 		.flags = IORESOURCE_MEM,
 	},
 	{
+		.name  = "stm-data-base",
 		.start = CORESIGHT_STM_CHANNEL_PHYS_BASE,
 		.end   = CORESIGHT_STM_CHANNEL_PHYS_BASE + SZ_1M + SZ_512K - 1,
 		.flags = IORESOURCE_MEM,
@@ -4035,6 +4232,7 @@ struct platform_device coresight_stm_device = {
 
 static struct resource coresight_etm0_resources[] = {
 	{
+		.name  = "etm-base",
 		.start = CORESIGHT_ETM0_PHYS_BASE,
 		.end   = CORESIGHT_ETM0_PHYS_BASE + SZ_4K - 1,
 		.flags = IORESOURCE_MEM,
@@ -4067,6 +4265,7 @@ struct platform_device coresight_etm0_device = {
 
 static struct resource coresight_etm1_resources[] = {
 	{
+		.name  = "etm-base",
 		.start = CORESIGHT_ETM1_PHYS_BASE,
 		.end   = CORESIGHT_ETM1_PHYS_BASE + SZ_4K - 1,
 		.flags = IORESOURCE_MEM,
@@ -4396,9 +4595,25 @@ static struct resource sglte_resources[] = {
 	},
 };
 
+static struct resource msm_gpio_resources[] = {
+	{
+		.start	= TLMM_MSM_SUMMARY_IRQ,
+		.end	= TLMM_MSM_SUMMARY_IRQ,
+		.flags	= IORESOURCE_IRQ,
+	},
+};
+
+static struct msm_gpio_pdata msm8960_gpio_pdata = {
+	.ngpio = 152,
+	.direct_connect_irqs = 8,
+};
+
 struct platform_device msm_gpio_device = {
-	.name = "msmgpio",
-	.id = -1,
+	.name			= "msmgpio",
+	.id			= -1,
+	.num_resources		= ARRAY_SIZE(msm_gpio_resources),
+	.resource		= msm_gpio_resources,
+	.dev.platform_data	= &msm8960_gpio_pdata,
 };
 
 struct platform_device mdm_sglte_device = {
@@ -4409,7 +4624,8 @@ struct platform_device mdm_sglte_device = {
 };
 
 struct platform_device *msm8960_vidc_device[] __initdata = {
-	&msm_device_vidc
+	&msm_device_vidc,
+	&msm_device_vidc_v4l2,
 };
 
 void __init msm8960_add_vidc_device(void)

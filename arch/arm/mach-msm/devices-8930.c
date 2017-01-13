@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -32,6 +32,7 @@
 #include "rpm_rbcpr_stats.h"
 #include "footswitch.h"
 #include "acpuclock-krait.h"
+#include "pm.h"
 
 #ifdef CONFIG_MSM_MPM
 #include <mach/mpm.h>
@@ -48,11 +49,32 @@ static struct resource msm8930_resources_pccntr[] = {
 	},
 };
 
-struct platform_device msm8930_pc_cntr = {
-	.name		= "pc-cntr",
+static struct msm_pm_init_data_type msm_pm_data = {
+	.retention_calls_tz = true,
+};
+
+static struct msm_pm_sleep_status_data msm_pm_slp_sts_data = {
+	.base_addr = MSM_ACC0_BASE + 0x08,
+	.cpu_offset = MSM_ACC1_BASE - MSM_ACC0_BASE,
+	.mask = 1UL << 13,
+};
+
+struct platform_device msm8930_cpu_slp_status = {
+	.name		= "cpu_slp_status",
+	.id		= -1,
+	.dev = {
+		.platform_data = &msm_pm_slp_sts_data,
+	},
+};
+
+struct platform_device msm8930_pm_8x60 = {
+	.name		= "pm-8x60",
 	.id		= -1,
 	.num_resources	= ARRAY_SIZE(msm8930_resources_pccntr),
 	.resource	= msm8930_resources_pccntr,
+	.dev = {
+		.platform_data = &msm_pm_data,
+	},
 };
 
 struct msm_rpm_platform_data msm8930_rpm_data __initdata = {
@@ -143,12 +165,12 @@ struct msm_rpm_platform_data msm8930_rpm_data __initdata = {
 		MSM_RPM_MAP(8930, PM8038_CLK2_0, PM8038_CLK2, 2),
 		MSM_RPM_MAP(8930, PM8038_LVS1, PM8038_LVS1, 1),
 		MSM_RPM_MAP(8930, PM8038_LVS2, PM8038_LVS2, 1),
-		MSM_RPM_MAP(8930, NCP_0, NCP, 2),
-		MSM_RPM_MAP(8930, CXO_BUFFERS, CXO_BUFFERS, 1),
-		MSM_RPM_MAP(8930, USB_OTG_SWITCH, USB_OTG_SWITCH, 1),
-		MSM_RPM_MAP(8930, HDMI_SWITCH, HDMI_SWITCH, 1),
-		MSM_RPM_MAP(8930, QDSS_CLK, QDSS_CLK, 1),
-		MSM_RPM_MAP(8930, VOLTAGE_CORNER, VOLTAGE_CORNER, 1),
+		MSM_RPM_MAP_PMIC(8930, 8038, NCP_0, NCP, 2),
+		MSM_RPM_MAP_PMIC(8930, 8038, CXO_BUFFERS, CXO_BUFFERS, 1),
+		MSM_RPM_MAP_PMIC(8930, 8038, USB_OTG_SWITCH, USB_OTG_SWITCH, 1),
+		MSM_RPM_MAP_PMIC(8930, 8038, HDMI_SWITCH, HDMI_SWITCH, 1),
+		MSM_RPM_MAP_PMIC(8930, 8038, QDSS_CLK, QDSS_CLK, 1),
+		MSM_RPM_MAP_PMIC(8930, 8038, VOLTAGE_CORNER, VOLTAGE_CORNER, 1),
 	},
 	.target_status = {
 		MSM_RPM_STATUS_ID_MAP(8930, VERSION_MAJOR),
@@ -369,12 +391,12 @@ struct msm_rpm_platform_data msm8930_rpm_data_pm8917 __initdata = {
 		MSM_RPM_MAP(8930, PM8917_LVS5, PM8917_LVS5, 1),
 		MSM_RPM_MAP(8930, PM8917_LVS6, PM8917_LVS6, 1),
 		MSM_RPM_MAP(8930, PM8917_LVS7, PM8917_LVS7, 1),
-		MSM_RPM_MAP(8930, NCP_0, NCP, 2),
-		MSM_RPM_MAP(8930, CXO_BUFFERS, CXO_BUFFERS, 1),
-		MSM_RPM_MAP(8930, USB_OTG_SWITCH, USB_OTG_SWITCH, 1),
-		MSM_RPM_MAP(8930, HDMI_SWITCH, HDMI_SWITCH, 1),
-		MSM_RPM_MAP(8930, QDSS_CLK, QDSS_CLK, 1),
-		MSM_RPM_MAP(8930, VOLTAGE_CORNER, VOLTAGE_CORNER, 1),
+		MSM_RPM_MAP_PMIC(8930, 8917, NCP_0, NCP, 2),
+		MSM_RPM_MAP_PMIC(8930, 8917, CXO_BUFFERS, CXO_BUFFERS, 1),
+		MSM_RPM_MAP_PMIC(8930, 8917, USB_OTG_SWITCH, USB_OTG_SWITCH, 1),
+		MSM_RPM_MAP_PMIC(8930, 8917, HDMI_SWITCH, HDMI_SWITCH, 1),
+		MSM_RPM_MAP_PMIC(8930, 8917, QDSS_CLK, QDSS_CLK, 1),
+		MSM_RPM_MAP_PMIC(8930, 8917, VOLTAGE_CORNER, VOLTAGE_CORNER, 1),
 	},
 	.target_status = {
 		MSM_RPM_STATUS_ID_MAP(8930, VERSION_MAJOR),
@@ -528,14 +550,14 @@ struct platform_device msm8930_rpm_device = {
 };
 
 static struct msm_rpm_log_platform_data msm_rpm_log_pdata = {
-	.phys_addr_base = 0x0010C000,
+	.phys_addr_base = 0x10B6A0,
 	.reg_offsets = {
 		[MSM_RPM_LOG_PAGE_INDICES] = 0x00000080,
 		[MSM_RPM_LOG_PAGE_BUFFER]  = 0x000000A0,
 	},
 	.phys_size = SZ_8K,
-	.log_len = 4096,		  /* log's buffer length in bytes */
-	.log_len_mask = (4096 >> 2) - 1,  /* length mask in units of u32 */
+	.log_len = 8192,		  /* log's buffer length in bytes */
+	.log_len_mask = (8192 >> 2) - 1,  /* length mask in units of u32 */
 };
 
 struct platform_device msm8930_rpm_log_device = {

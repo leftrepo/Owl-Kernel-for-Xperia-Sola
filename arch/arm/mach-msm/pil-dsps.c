@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -21,10 +21,11 @@
 
 #include <mach/subsystem_restart.h>
 #include <mach/msm_smsm.h>
+#include <mach/ramdump.h>
+#include <mach/msm_smem.h>
 
 #include "peripheral-loader.h"
 #include "scm-pas.h"
-#include "ramdump.h"
 
 #define PPSS_RESET			0x2594
 #define PPSS_RESET_PROC_RESET		0x2
@@ -48,7 +49,6 @@ struct dsps_data {
 	void __iomem *ppss_base;
 
 	void *ramdump_dev;
-	struct ramdump_segment fw_ramdump_segments[4];
 
 	void *smem_ramdump_dev;
 	struct ramdump_segment smem_ramdump_segments[1];
@@ -143,9 +143,6 @@ static void dsps_log_sfr(void)
 
 static void dsps_restart_handler(struct dsps_data *drv)
 {
-	pr_debug("%s: Restart lvl %d\n",
-		__func__, get_restart_level());
-
 	if (atomic_add_return(1, &drv->crash_in_progress) > 1) {
 		pr_err("%s: DSPS already resetting. Count %d\n", __func__,
 		       atomic_read(&drv->crash_in_progress));
@@ -212,16 +209,13 @@ static int dsps_ramdump(int enable, const struct subsys_desc *desc)
 	if (!enable)
 		return 0;
 
-	ret = do_ramdump(drv->ramdump_dev,
-		drv->fw_ramdump_segments,
-		ARRAY_SIZE(drv->fw_ramdump_segments));
+	ret = pil_do_ramdump(&drv->desc, drv->ramdump_dev);
 	if (ret < 0) {
 		pr_err("%s: Unable to dump DSPS memory (rc = %d).\n",
 		       __func__, ret);
 		return ret;
 	}
-	ret = do_ramdump(drv->smem_ramdump_dev,
-		drv->smem_ramdump_segments,
+	ret = do_elf_ramdump(drv->smem_ramdump_dev, drv->smem_ramdump_segments,
 		ARRAY_SIZE(drv->smem_ramdump_segments));
 	if (ret < 0) {
 		pr_err("%s: Unable to dump smem memory (rc = %d).\n",
@@ -293,14 +287,6 @@ static int __devinit pil_dsps_driver_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
-	drv->fw_ramdump_segments[0].address = 0x12000000;
-	drv->fw_ramdump_segments[0].size = 0x28000;
-	drv->fw_ramdump_segments[1].address = 0x12040000;
-	drv->fw_ramdump_segments[1].size = 0x4000;
-	drv->fw_ramdump_segments[2].address = 0x12800000;
-	drv->fw_ramdump_segments[2].size = 0x4000;
-	drv->fw_ramdump_segments[3].address = 0x8fe00000;
-	drv->fw_ramdump_segments[3].size = 0x100000;
 	drv->ramdump_dev = create_ramdump_device("dsps", &pdev->dev);
 	if (!drv->ramdump_dev) {
 		ret = -ENOMEM;

@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2012, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -77,6 +77,8 @@
 #define SPS_BAM_OPT_IRQ_WAKEUP      (1UL << 3)
 /* Ignore external block pipe reset */
 #define SPS_BAM_NO_EXT_P_RST        (1UL << 4)
+/* Don't enable local clock gating */
+#define SPS_BAM_NO_LOCAL_CLK_GATING (1UL << 5)
 
 /* BAM device management flags */
 
@@ -144,6 +146,8 @@ enum sps_option {
 	SPS_O_WRITE_NWD   = 0x00040000,
 
 	/* Options to enable software features */
+	/* Do not disable a pipe during disconnection */
+	SPS_O_NO_DISABLE      = 0x00800000,
 	/* Transfer operation should be polled */
 	SPS_O_POLL      = 0x01000000,
 	/* Disable queuing of transfer events for the connection end point */
@@ -160,6 +164,8 @@ enum sps_option {
 	SPS_O_AUTO_ENABLE = 0x20000000,
 	/* DISABLE endpoint synchronization for config/enable/disable */
 	SPS_O_NO_EP_SYNC = 0x40000000,
+	/* Allow partial polling duing IRQ mode */
+	SPS_O_HYBRID = 0x80000000,
 };
 
 /**
@@ -252,6 +258,7 @@ enum sps_timer_mode {
 enum sps_callback_case {
 	SPS_CALLBACK_BAM_ERROR_IRQ = 1,     /* BAM ERROR IRQ */
 	SPS_CALLBACK_BAM_HRESP_ERR_IRQ,	    /* Erroneous HResponse */
+	SPS_CALLBACK_BAM_TIMER_IRQ,	    /* Inactivity timer */
 };
 
 /*
@@ -404,6 +411,11 @@ struct sps_bam_props {
 
 	u32 sec_config;
 	struct sps_bam_sec_config_props *p_sec_config_props;
+
+	/* Logging control */
+
+	bool constrained_logging;
+	u32 logging_number;
 };
 
 /**
@@ -1251,14 +1263,23 @@ int sps_get_unused_desc_num(struct sps_pipe *h, u32 *desc_num);
  *
  * @tb_sel - testbus selection
  *
- * @pre_level - prescreening level
+ * @desc_sel - selection of descriptors
  *
  * @return 0 on success, negative value on error
  *
  */
 int sps_get_bam_debug_info(u32 dev, u32 option, u32 para,
-		u32 tb_sel, u8 pre_level);
+		u32 tb_sel, u32 desc_sel);
 
+/**
+ * Vote for or relinquish BAM DMA clock
+ *
+ * @clk_on - to turn on or turn off the clock
+ *
+ * @return 0 on success, negative value on error
+ *
+ */
+int sps_ctrl_bam_dma_clk(bool clk_on);
 #else
 static inline int sps_register_bam_device(const struct sps_bam_props
 			*bam_props, u32 *dev_handle)
@@ -1417,7 +1438,12 @@ static inline int sps_get_unused_desc_num(struct sps_pipe *h, u32 *desc_num)
 }
 
 static inline int sps_get_bam_debug_info(u32 dev, u32 option, u32 para,
-		u32 tb_sel, u8 pre_level)
+		u32 tb_sel, u32 desc_sel)
+{
+	return -EPERM;
+}
+
+static inline int sps_ctrl_bam_dma_clk(bool clk_on)
 {
 	return -EPERM;
 }

@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -539,7 +539,6 @@ static int qports_venus_p0[] = {4};
 static int qports_venus_p1[] = {5};
 static int qports_vfe[] = {6};
 static int qports_gemini_ocmem[] = {0};
-static int qports_mdp_ocmem[] = {1};
 static int qports_venus_p0_ocmem[] = {2};
 static int qports_venus_p1_ocmem[] = {3};
 static int qports_vfe_ocmem[] = {4};
@@ -642,6 +641,8 @@ static struct msm_bus_node_info sys_noc_info[] = {
 		.qport = qports_crypto_c0,
 		.mas_hw_id = MAS_CRYPTO_CORE0,
 		.hw_sel = MSM_BUS_NOC,
+		.prio_rd = 1,
+		.prio_wr = 1,
 	},
 	{
 		.id = MSM_BUS_MASTER_CRYPTO_CORE1,
@@ -653,6 +654,8 @@ static struct msm_bus_node_info sys_noc_info[] = {
 		.qport = qports_crypto_c1,
 		.mas_hw_id = MAS_CRYPTO_CORE1,
 		.hw_sel = MSM_BUS_NOC,
+		.prio_rd = 1,
+		.prio_wr = 1,
 	},
 	{
 		.id = MSM_BUS_MASTER_LPASS_PROC,
@@ -722,6 +725,7 @@ static struct msm_bus_node_info sys_noc_info[] = {
 		.prio_rd = 2,
 		.prio_wr = 2,
 		.hw_sel = MSM_BUS_NOC,
+		.iface_clk_node = "msm_usb3",
 	},
 	{
 		.id = MSM_BUS_SLAVE_AMPSS,
@@ -1149,7 +1153,6 @@ static struct msm_bus_node_info ocmem_noc_info[]  = {
 		.num_tiers = ARRAY_SIZE(tier2),
 		.perm_mode = NOC_QOS_PERM_MODE_FIXED,
 		.mode = NOC_QOS_MODE_FIXED,
-		.qport = qports_mdp_ocmem,
 		.mas_hw_id = MAS_MDP_OCMEM,
 		.hw_sel = MSM_BUS_NOC,
 	},
@@ -2004,3 +2007,8 @@ struct msm_bus_fabric_registration msm_bus_8974_ocmem_vnoc_pdata = {
 	.virt = 1,
 	.rpm_enabled = 1,
 };
+
+void msm_bus_board_init(struct msm_bus_fabric_registration *pdata)
+{
+	pdata->board_algo = &msm_bus_board_algo;
+}

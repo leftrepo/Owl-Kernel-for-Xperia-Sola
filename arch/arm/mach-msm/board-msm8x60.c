@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2012, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -11,6 +11,7 @@
  *
  */
 
+#include <linux/err.h>
 #include <linux/kernel.h>
 #include <linux/platform_device.h>
 #include <linux/gpio.h>
@@ -39,10 +40,6 @@
 #include <linux/i2c/isa1200.h>
 #include <linux/dma-mapping.h>
 #include <linux/i2c/bq27520.h>
-
-#ifdef CONFIG_ANDROID_PMEM
-#include <linux/android_pmem.h>
-#endif
 
 #if defined(CONFIG_SMB137B_CHARGER) || defined(CONFIG_SMB137B_CHARGER_MODULE)
 #include <linux/i2c/smb137b.h>
@@ -103,6 +100,7 @@
 #include "clock.h"
 #include "pm-boot.h"
 #include "board-storage-common-a.h"
+#include "platsmp.h"
 
 #include <linux/msm_ion.h>
 #include <mach/ion.h>
@@ -2806,47 +2804,6 @@ static struct platform_device msm_fb_device = {
 	.dev.platform_data = &msm_fb_pdata,
 };
 
-#ifdef CONFIG_ANDROID_PMEM
-#ifndef CONFIG_MSM_MULTIMEDIA_USE_ION
-static struct android_pmem_platform_data android_pmem_pdata = {
-	.name = "pmem",
-	.allocator_type = PMEM_ALLOCATORTYPE_ALLORNOTHING,
-	.cached = 1,
-	.memory_type = MEMTYPE_EBI1,
-};
-
-static struct platform_device android_pmem_device = {
-	.name = "android_pmem",
-	.id = 0,
-	.dev = {.platform_data = &android_pmem_pdata},
-};
-
-static struct android_pmem_platform_data android_pmem_adsp_pdata = {
-	.name = "pmem_adsp",
-	.allocator_type = PMEM_ALLOCATORTYPE_BITMAP,
-	.cached = 0,
-	.memory_type = MEMTYPE_EBI1,
-};
-
-static struct platform_device android_pmem_adsp_device = {
-	.name = "android_pmem",
-	.id = 2,
-	.dev = { .platform_data = &android_pmem_adsp_pdata },
-};
-
-static struct android_pmem_platform_data android_pmem_audio_pdata = {
-	.name = "pmem_audio",
-	.allocator_type = PMEM_ALLOCATORTYPE_BITMAP,
-	.cached = 0,
-	.memory_type = MEMTYPE_EBI1,
-};
-
-static struct platform_device android_pmem_audio_device = {
-	.name = "android_pmem",
-	.id = 4,
-	.dev = { .platform_data = &android_pmem_audio_pdata },
-};
-#endif /*CONFIG_MSM_MULTIMEDIA_USE_ION*/
 #define PMEM_BUS_WIDTH(_bw) \
 	{ \
 		.vectors = &(struct msm_bus_vectors){ \
@@ -2889,6 +2846,49 @@ void *setup_smi_region(void)
 {
 	return (void *)msm_bus_scale_register_client(&smi_client_pdata);
 }
+
+#ifdef CONFIG_ANDROID_PMEM
+#ifndef CONFIG_MSM_MULTIMEDIA_USE_ION
+static struct android_pmem_platform_data android_pmem_pdata = {
+	.name = "pmem",
+	.allocator_type = PMEM_ALLOCATORTYPE_ALLORNOTHING,
+	.cached = 1,
+	.memory_type = MEMTYPE_EBI1,
+};
+
+static struct platform_device android_pmem_device = {
+	.name = "android_pmem",
+	.id = 0,
+	.dev = {.platform_data = &android_pmem_pdata},
+};
+
+static struct android_pmem_platform_data android_pmem_adsp_pdata = {
+	.name = "pmem_adsp",
+	.allocator_type = PMEM_ALLOCATORTYPE_BITMAP,
+	.cached = 0,
+	.memory_type = MEMTYPE_EBI1,
+};
+
+static struct platform_device android_pmem_adsp_device = {
+	.name = "android_pmem",
+	.id = 2,
+	.dev = { .platform_data = &android_pmem_adsp_pdata },
+};
+
+static struct android_pmem_platform_data android_pmem_audio_pdata = {
+	.name = "pmem_audio",
+	.allocator_type = PMEM_ALLOCATORTYPE_BITMAP,
+	.cached = 0,
+	.memory_type = MEMTYPE_EBI1,
+};
+
+static struct platform_device android_pmem_audio_device = {
+	.name = "android_pmem",
+	.id = 4,
+	.dev = { .platform_data = &android_pmem_audio_pdata },
+};
+#endif /*CONFIG_MSM_MULTIMEDIA_USE_ION*/
+
 #ifndef CONFIG_MSM_MULTIMEDIA_USE_ION
 static struct android_pmem_platform_data android_pmem_smipool_pdata = {
 	.name = "pmem_smipool",
@@ -5297,6 +5297,7 @@ static struct platform_device *surf_devices[] __initdata = {
 	&msm_device_tz_log,
 	&msm_rtb_device,
 	&msm8660_iommu_domain_device,
+	&msm8660_pm_8x60,
 };
 
 #ifdef CONFIG_ION_MSM
@@ -5347,9 +5348,7 @@ static struct ion_co_heap_pdata co_ion_pdata = {
  * to each other.
  * Don't swap the order unless you know what you are doing!
  */
-static struct ion_platform_data ion_pdata = {
-	.nr = MSM_ION_HEAP_NUM,
-	.heaps = {
+struct ion_platform_heap msm8x60_heaps [] = {
 		{
 			.id	= ION_SYSTEM_HEAP_ID,
 			.type	= ION_HEAP_TYPE_SYSTEM,
@@ -5424,7 +5423,11 @@ static struct ion_platform_data ion_pdata = {
 			.extra_data = (void *)&co_ion_pdata,
 		},
 #endif
-	}
+};
+
+static struct ion_platform_data ion_pdata = {
+	.nr = MSM_ION_HEAP_NUM,
+	.heaps = msm8x60_heaps,
 };
 
 static struct platform_device ion_dev = {
@@ -5555,7 +5558,7 @@ static void __init msm8x60_calculate_reserve_sizes(void)
 	reserve_rtb_memory();
 }
 
-static int msm8x60_paddr_to_memtype(unsigned int paddr)
+static int msm8x60_paddr_to_memtype(phys_addr_t paddr)
 {
 	if (paddr >= 0x40000000 && paddr < 0x60000000)
 		return MEMTYPE_EBI1;
@@ -7537,9 +7540,9 @@ static void __init msm8x60_map_io(void)
 {
 	msm_shared_ram_phys = MSM_SHARED_RAM_PHYS;
 	msm_map_msm8x60_io();
-
 	if (socinfo_init() < 0)
 		pr_err("socinfo_init() failed!\n");
+
 }
 
 /*
@@ -10504,6 +10507,7 @@ MACHINE_START(MSM8X60_SURF, "QCT MSM8X60 SURF")
 	.timer = &msm_timer,
 	.init_early = msm8x60_charm_init_early,
 	.restart = msm_restart,
+	.smp = &scorpion_smp_ops,
 MACHINE_END
 
 MACHINE_START(MSM8X60_FFA, "QCT MSM8X60 FFA")
@@ -10515,6 +10519,7 @@ MACHINE_START(MSM8X60_FFA, "QCT MSM8X60 FFA")
 	.timer = &msm_timer,
 	.init_early = msm8x60_charm_init_early,
 	.restart = msm_restart,
+	.smp = &scorpion_smp_ops,
 MACHINE_END
 
 MACHINE_START(MSM8X60_FLUID, "QCT MSM8X60 FLUID")
@@ -10526,6 +10531,7 @@ MACHINE_START(MSM8X60_FLUID, "QCT MSM8X60 FLUID")
 	.timer = &msm_timer,
 	.init_early = msm8x60_charm_init_early,
 	.restart = msm_restart,
+	.smp = &scorpion_smp_ops,
 MACHINE_END
 
 MACHINE_START(MSM8X60_FUSION, "QCT MSM8X60 FUSION SURF")
@@ -10537,6 +10543,7 @@ MACHINE_START(MSM8X60_FUSION, "QCT MSM8X60 FUSION SURF")
 	.timer = &msm_timer,
 	.init_early = msm8x60_charm_init_early,
 	.restart = msm_restart,
+	.smp = &scorpion_smp_ops,
 MACHINE_END
 
 MACHINE_START(MSM8X60_FUSN_FFA, "QCT MSM8X60 FUSION FFA")
@@ -10548,6 +10555,7 @@ MACHINE_START(MSM8X60_FUSN_FFA, "QCT MSM8X60 FUSION FFA")
 	.timer = &msm_timer,
 	.init_early = msm8x60_charm_init_early,
 	.restart = msm_restart,
+	.smp = &scorpion_smp_ops,
 MACHINE_END
 
 MACHINE_START(MSM8X60_DRAGON, "QCT MSM8X60 DRAGON")
@@ -10559,4 +10567,5 @@ MACHINE_START(MSM8X60_DRAGON, "QCT MSM8X60 DRAGON")
 	.timer = &msm_timer,
 	.init_early = msm8x60_charm_init_early,
 	.restart = msm_restart,
+	.smp = &scorpion_smp_ops,
 MACHINE_END

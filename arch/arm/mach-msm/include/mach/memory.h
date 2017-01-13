@@ -69,19 +69,13 @@ extern unsigned long ebi1_phys_offset;
 #endif
 
 #ifndef __ASSEMBLY__
-void *alloc_bootmem_aligned(unsigned long size, unsigned long alignment);
 void *allocate_contiguous_ebi(unsigned long, unsigned long, int);
-unsigned long allocate_contiguous_ebi_nomap(unsigned long, unsigned long);
+phys_addr_t allocate_contiguous_ebi_nomap(unsigned long, unsigned long);
 void clean_and_invalidate_caches(unsigned long, unsigned long, unsigned long);
 void clean_caches(unsigned long, unsigned long, unsigned long);
 void invalidate_caches(unsigned long, unsigned long, unsigned long);
-int platform_physical_remove_pages(u64, u64);
-int platform_physical_active_pages(u64, u64);
-int platform_physical_low_power_pages(u64, u64);
 int msm_get_memory_type_from_name(const char *memtype_name);
 unsigned long get_ddr_size(void);
-
-extern int (*change_memory_power)(u64, u64, int);
 
 #if defined(CONFIG_ARCH_MSM_ARM11) || defined(CONFIG_ARCH_MSM_CORTEX_A5)
 void write_to_strongly_ordered_memory(void);
@@ -99,9 +93,9 @@ extern void store_ttbr0(void);
 #endif
 
 #define MAX_HOLE_ADDRESS    (PHYS_OFFSET + 0x10000000)
-extern unsigned long memory_hole_offset;
-extern unsigned long memory_hole_start;
-extern unsigned long memory_hole_end;
+extern phys_addr_t memory_hole_offset;
+extern phys_addr_t memory_hole_start;
+extern phys_addr_t memory_hole_end;
 extern unsigned long memory_hole_align;
 extern unsigned long virtual_hole_start;
 extern unsigned long virtual_hole_end;
@@ -113,11 +107,13 @@ void find_memory_hole(void);
 				memory_hole_align)
 
 #define __phys_to_virt(phys)				\
+	(unsigned long)\
 	((MEM_HOLE_END_PHYS_OFFSET && ((phys) >= MEM_HOLE_END_PHYS_OFFSET)) ? \
 	(phys) - MEM_HOLE_END_PHYS_OFFSET + MEM_HOLE_PAGE_OFFSET :	\
 	(phys) - PHYS_OFFSET + PAGE_OFFSET)
 
 #define __virt_to_phys(virt)				\
+	(unsigned long)\
 	((MEM_HOLE_END_PHYS_OFFSET && ((virt) >= MEM_HOLE_PAGE_OFFSET)) ? \
 	(virt) - MEM_HOLE_PAGE_OFFSET + MEM_HOLE_END_PHYS_OFFSET :	\
 	(virt) - PAGE_OFFSET + PHYS_OFFSET)

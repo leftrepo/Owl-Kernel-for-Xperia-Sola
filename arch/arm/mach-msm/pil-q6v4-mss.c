@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012,2013 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -22,9 +22,10 @@
 
 #include <mach/subsystem_restart.h>
 #include <mach/msm_smsm.h>
+#include <mach/ramdump.h>
+#include <mach/msm_smem.h>
 
 #include "smd_private.h"
-#include "ramdump.h"
 #include "peripheral-loader.h"
 #include "pil-q6v4.h"
 #include "scm-pas.h"
@@ -243,14 +244,6 @@ void modem_crash_shutdown(const struct subsys_desc *subsys)
 	smsm_reset_modem(SMSM_RESET);
 }
 
-static struct ramdump_segment sw_segments[] = {
-	{0x89000000, 0x8D400000 - 0x89000000},
-};
-
-static struct ramdump_segment fw_segments[] = {
-	{0x8D400000, 0x8DA00000 - 0x8D400000},
-};
-
 static struct ramdump_segment smem_segments[] = {
 	{0x80000000, 0x00200000},
 };
@@ -263,17 +256,15 @@ static int modem_ramdump(int enable, const struct subsys_desc *subsys)
 	if (!enable)
 		return 0;
 
-	ret = do_ramdump(drv->sw_ramdump_dev, sw_segments,
-		ARRAY_SIZE(sw_segments));
+	ret = pil_do_ramdump(&drv->q6_sw.desc, drv->sw_ramdump_dev);
 	if (ret < 0)
 		return ret;
 
-	ret = do_ramdump(drv->fw_ramdump_dev, fw_segments,
-		ARRAY_SIZE(fw_segments));
+	ret = pil_do_ramdump(&drv->q6_fw.desc, drv->fw_ramdump_dev);
 	if (ret < 0)
 		return ret;
 
-	ret = do_ramdump(drv->smem_ramdump_dev, smem_segments,
+	ret = do_elf_ramdump(drv->smem_ramdump_dev, smem_segments,
 		ARRAY_SIZE(smem_segments));
 	if (ret < 0)
 		return ret;

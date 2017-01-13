@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -259,13 +259,93 @@ static struct msm_gpiomux_config wlan_ath6kl_configs[] __initdata = {
 	},
 };
 
+static struct gpiomux_setting sdc2_card_det_cfg = {
+	.func = GPIOMUX_FUNC_GPIO,
+	.drv = GPIOMUX_DRV_2MA,
+	.pull = GPIOMUX_PULL_DOWN,
+	.dir = GPIOMUX_IN,
+};
+
+struct msm_gpiomux_config sdc2_card_det_config[] __initdata = {
+	{
+		.gpio = 66,
+		.settings = {
+			[GPIOMUX_ACTIVE]    = &sdc2_card_det_cfg,
+			[GPIOMUX_SUSPENDED] = &sdc2_card_det_cfg,
+		},
+	},
+};
+
+#ifdef CONFIG_FB_MSM_QPIC
+static struct gpiomux_setting qpic_lcdc_a_d = {
+	.func = GPIOMUX_FUNC_1,
+	.drv = GPIOMUX_DRV_10MA,
+	.pull = GPIOMUX_PULL_NONE,
+};
+
+static struct gpiomux_setting qpic_lcdc_cs = {
+	.func = GPIOMUX_FUNC_1,
+	.drv = GPIOMUX_DRV_10MA,
+	.pull = GPIOMUX_PULL_NONE,
+};
+
+static struct gpiomux_setting qpic_lcdc_rs = {
+	.func = GPIOMUX_FUNC_1,
+	.drv = GPIOMUX_DRV_10MA,
+	.pull = GPIOMUX_PULL_NONE,
+};
+
+static struct gpiomux_setting qpic_lcdc_te = {
+	.func = GPIOMUX_FUNC_7,
+	.drv = GPIOMUX_DRV_10MA,
+	.pull = GPIOMUX_PULL_NONE,
+};
+
+static struct msm_gpiomux_config msm9625_qpic_lcdc_configs[] __initdata = {
+	{
+		.gpio      = 20,	/* a_d */
+		.settings = {
+			[GPIOMUX_SUSPENDED] = &qpic_lcdc_a_d,
+		},
+	},
+	{
+		.gpio      = 21,	/* cs */
+		.settings = {
+			[GPIOMUX_SUSPENDED] = &qpic_lcdc_cs,
+		},
+	},
+	{
+		.gpio      = 22,	/* te */
+		.settings = {
+			[GPIOMUX_SUSPENDED] = &qpic_lcdc_te,
+		},
+	},
+	{
+		.gpio      = 23,	/* rs */
+		.settings = {
+			[GPIOMUX_SUSPENDED] = &qpic_lcdc_rs,
+		},
+	},
+};
+
+static void msm9625_disp_init_gpiomux(void)
+{
+	msm_gpiomux_install(msm9625_qpic_lcdc_configs,
+			ARRAY_SIZE(msm9625_qpic_lcdc_configs));
+}
+#else
+static void msm9625_disp_init_gpiomux(void)
+{
+}
+#endif /* CONFIG_FB_MSM_QPIC */
+
 void __init msm9625_init_gpiomux(void)
 {
 	int rc;
 
-	rc = msm_gpiomux_init(NR_GPIO_IRQS);
+	rc = msm_gpiomux_init_dt();
 	if (rc) {
-		pr_err(KERN_ERR "msm9625_init_gpiomux failed %d\n", rc);
+		pr_err("%s failed %d\n", __func__, rc);
 		return;
 	}
 
@@ -277,4 +357,7 @@ void __init msm9625_init_gpiomux(void)
 			ARRAY_SIZE(mdm9625_mi2s_configs));
 	msm_gpiomux_install(mdm9625_cdc_reset_config,
 			ARRAY_SIZE(mdm9625_cdc_reset_config));
+	msm_gpiomux_install(sdc2_card_det_config,
+		ARRAY_SIZE(sdc2_card_det_config));
+	msm9625_disp_init_gpiomux();
 }

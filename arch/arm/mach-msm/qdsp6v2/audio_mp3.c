@@ -2,7 +2,7 @@
  *
  * Copyright (C) 2008 Google, Inc.
  * Copyright (C) 2008 HTC Corporation
- * Copyright (c) 2011-2012, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -47,6 +47,11 @@ static long audio_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		audio->eos_rsp = 0;
 		audio->eos_flag = 0;
 		if (!rc) {
+			rc = enable_volume_ramp(audio);
+			if (rc < 0) {
+				pr_err("%s: Failed to enable volume ramp\n",
+					__func__);
+			}
 			audio->enabled = 1;
 		} else {
 			audio->enabled = 0;
@@ -123,6 +128,10 @@ static int audio_open(struct inode *inode, struct file *file)
 		goto fail;
 	}
 	rc = audio_aio_open(audio, file);
+	if (rc < 0) {
+		pr_err("audio_aio_open rc=%d\n", rc);
+		goto fail;
+	}
 
 #ifdef CONFIG_DEBUG_FS
 	snprintf(name, sizeof name, "msm_mp3_%04x", audio->ac->session);

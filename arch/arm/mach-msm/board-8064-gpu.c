@@ -51,7 +51,7 @@ static struct msm_dcvs_core_info grp3d_core_info = {
 		.ss_win_size_min_us	= 1000000,
 		.ss_win_size_max_us	= 1000000,
 		.ss_util_pct		= 95,
-		.ss_iobusy_conv		= 100,
+		.ss_no_corr_below_freq	= 0,
 	},
 
 	.energy_coeffs		= {
@@ -182,6 +182,12 @@ static struct resource kgsl_3d0_resources[] = {
 	{
 		.name = KGSL_3D0_REG_MEMORY,
 		.start = 0x04300000, /* GFX3D address */
+		.end = 0x0430ffff,
+		.flags = IORESOURCE_MEM,
+	},
+	{
+		.name = KGSL_3D0_SHADER_MEMORY,
+		.start = 0x04310000, /* Shader Mem Address */
 		.end = 0x0431ffff,
 		.flags = IORESOURCE_MEM,
 	},
@@ -249,7 +255,6 @@ static struct kgsl_device_platform_data kgsl_3d0_pdata = {
 	.num_levels = 5,
 	.set_grp_async = NULL,
 	.idle_timeout = HZ/10,
-	.nap_allowed = true,
 	.strtstp_sleepwake = true,
 	.clk_map = KGSL_CLK_CORE | KGSL_CLK_IFACE | KGSL_CLK_MEM_IFACE,
 #ifdef CONFIG_MSM_BUS_SCALING

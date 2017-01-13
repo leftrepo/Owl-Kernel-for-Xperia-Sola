@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2012, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -23,10 +23,11 @@
 #include <linux/wcnss_wlan.h>
 
 #include <mach/subsystem_restart.h>
+#include <mach/ramdump.h>
+#include <mach/msm_smem.h>
 
 #include "peripheral-loader.h"
 #include "scm-pas.h"
-#include "ramdump.h"
 #include "smd_private.h"
 
 #define RIVA_PMU_A2XB_CFG		0xB8
@@ -134,7 +135,7 @@ static int pil_riva_reset(struct pil_desc *pil)
 	u32 reg, sel;
 	struct riva_data *drv = dev_get_drvdata(pil->dev);
 	void __iomem *base = drv->base;
-	unsigned long start_addr = pil_get_entry_addr(pil);
+	phys_addr_t start_addr = pil_get_entry_addr(pil);
 	void __iomem *cbase = drv->cbase;
 	bool use_cxo = cxo_is_needed(drv);
 
@@ -312,6 +313,7 @@ static void smsm_state_cb_hdlr(void *data, uint32_t old_state,
 	}
 
 	pr_err("riva: smsm state changed to smsm reset\n");
+	wcnss_riva_dump_pmic_regs();
 
 	smem_reset_reason = smem_get_entry(SMEM_SSR_REASON_WCNSS0,
 		&smem_reset_size);
@@ -349,6 +351,7 @@ static irqreturn_t riva_wdog_bite_irq_hdlr(int irq, void *dev_id)
 		panic("Watchdog bite received from Riva");
 
 	drv->rst_in_progress = 1;
+	wcnss_riva_log_debug_regs();
 	subsystem_restart_dev(drv->subsys);
 
 	return IRQ_HANDLED;
@@ -412,26 +415,16 @@ static int riva_powerup(const struct subsys_desc *desc)
 	return ret;
 }
 
-/*
- * 7MB RAM segments for Riva SS;
- * Riva 1.1 0x8f000000 - 0x8f700000
- * Riva 1.0 0x8f200000 - 0x8f700000
- */
-static struct ramdump_segment riva_segments[] = {
-	{0x8f000000, 0x8f700000 - 0x8f000000}
-};
-
 static int riva_ramdump(int enable, const struct subsys_desc *desc)
 {
 	struct riva_data *drv;
 
 	drv = container_of(desc, struct riva_data, subsys_desc);
 
-	if (enable)
-		return do_ramdump(drv->ramdump_dev, riva_segments,
-				ARRAY_SIZE(riva_segments));
-	else
+	if (!enable)
 		return 0;
+
+	return pil_do_ramdump(&drv->pil_desc, drv->ramdump_dev);
 }
 
 /* Riva crash handler */
@@ -542,7 +535,7 @@ static int __devinit pil_riva_probe(struct platform_device *pdev)
 	}
 
 	ret = devm_request_irq(&pdev->dev, drv->irq, riva_wdog_bite_irq_hdlr,
-			IRQF_TRIGGER_HIGH, "riva_wdog", drv);
+			IRQF_TRIGGER_RISING, "riva_wdog", drv);
 	if (ret < 0)
 		goto err;
 

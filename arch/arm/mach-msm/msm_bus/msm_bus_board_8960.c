@@ -440,17 +440,12 @@ static struct msm_bus_node_info system_fabric_info[]  = {
 	},
 };
 
-static int mport_mdp[] = {
-	MSM_BUS_MASTER_PORT_MDP_PORT0,
-	MSM_BUS_MASTER_PORT_MDP_PORT1,
-};
+static int mport_mdp[] = {MSM_BUS_MASTER_PORT_MDP_PORT0,};
 static int mport_mdp1[] = {MSM_BUS_MASTER_PORT_MDP_PORT1,};
 static int mport_rotator[] = {MSM_BUS_MASTER_PORT_ROTATOR,};
 static int mport_graphics_3d[] = {MSM_BUS_MASTER_PORT_GRAPHICS_3D,};
-static int pro_mport_graphics_3d[] = {
-	MSM_BUS_MASTER_PORT_GRAPHICS_3D_PORT0,
-	MSM_BUS_MASTER_PORT_GRAPHICS_3D,
-};
+static int pro_mport_graphics_3d[] = {MSM_BUS_MASTER_PORT_GRAPHICS_3D_PORT0,};
+static int pro_mport_graphics_3d_p1[] = {MSM_BUS_MASTER_PORT_GRAPHICS_3D,};
 static int mport_jpeg_dec[] = {MSM_BUS_MASTER_PORT_JPEG_DEC,};
 static int mport_graphics_2d_core0[] = {MSM_BUS_MASTER_PORT_GRAPHICS_2D_CORE0,};
 static int mport_vfe[] = {MSM_BUS_MASTER_PORT_VFE,};
@@ -623,6 +618,13 @@ static struct msm_bus_node_info sg_mmss_fabric_info[]  = {
 		.id = MSM_BUS_MASTER_GRAPHICS_3D,
 		.masterp = pro_mport_graphics_3d,
 		.num_mports = ARRAY_SIZE(pro_mport_graphics_3d),
+		.tier = tier2,
+		.num_tiers = ARRAY_SIZE(tier2),
+	},
+	{
+		.id = MSM_BUS_MASTER_GRAPHICS_3D_PORT1,
+		.masterp = pro_mport_graphics_3d_p1,
+		.num_mports = ARRAY_SIZE(pro_mport_graphics_3d_p1),
 		.tier = tier2,
 		.num_tiers = ARRAY_SIZE(tier2),
 	},
@@ -1108,4 +1110,8 @@ int msm_bus_board_rpm_get_il_ids(uint16_t id[])
 	id[0] = MSM_RPM_STATUS_ID_EBI1_CH0_RANGE;
 	id[1] = MSM_RPM_STATUS_ID_EBI1_CH1_RANGE;
 	return 0;
+}
+
+void msm_bus_board_init(struct msm_bus_fabric_registration *pdata)
+{
 }

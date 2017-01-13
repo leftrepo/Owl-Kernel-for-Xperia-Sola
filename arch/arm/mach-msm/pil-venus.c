@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -28,26 +28,41 @@
 #include <mach/iommu.h>
 #include <mach/iommu_domains.h>
 #include <mach/subsystem_restart.h>
+#include <mach/msm_bus_board.h>
+#include <mach/msm_bus.h>
+#include <mach/ramdump.h>
 
 #include "peripheral-loader.h"
 #include "scm-pas.h"
 
 /* VENUS WRAPPER registers */
+#define VENUS_WRAPPER_HW_VERSION			0x0
 #define VENUS_WRAPPER_CLOCK_CONFIG			0x4
-#define VENUS_WRAPPER_VBIF_SS_SEC_CPA_START_ADDR	0x1018
-#define VENUS_WRAPPER_VBIF_SS_SEC_CPA_END_ADDR		0x101C
-#define VENUS_WRAPPER_VBIF_SS_SEC_FW_START_ADDR		0x1020
-#define VENUS_WRAPPER_VBIF_SS_SEC_FW_END_ADDR		0x1024
+
+#define VENUS_WRAPPER_VBIF_SS_SEC_CPA_START_ADDR_v1	0x1018
+#define VENUS_WRAPPER_VBIF_SS_SEC_CPA_END_ADDR_v1	0x101C
+#define VENUS_WRAPPER_VBIF_SS_SEC_FW_START_ADDR_v1	0x1020
+#define VENUS_WRAPPER_VBIF_SS_SEC_FW_END_ADDR_v1	0x1024
+
+#define VENUS_WRAPPER_VBIF_SS_SEC_CPA_START_ADDR_v2	0x1020
+#define VENUS_WRAPPER_VBIF_SS_SEC_CPA_END_ADDR_v2	0x1024
+#define VENUS_WRAPPER_VBIF_SS_SEC_FW_START_ADDR_v2	0x1028
+#define VENUS_WRAPPER_VBIF_SS_SEC_FW_END_ADDR_v2	0x102C
+
 #define VENUS_WRAPPER_CPU_CLOCK_CONFIG			0x2000
 #define VENUS_WRAPPER_SW_RESET				0x3000
 
 /* VENUS VBIF registers */
-#define VENUS_VBIF_AXI_HALT_CTRL0			0x0
+#define VENUS_VBIF_CLKON				0x4
+#define VENUS_VBIF_CLKON_FORCE_ON			BIT(0)
+
+#define VENUS_VBIF_AXI_HALT_CTRL0			0x208
 #define VENUS_VBIF_AXI_HALT_CTRL0_HALT_REQ		BIT(0)
 
-#define VENUS_VBIF_AXI_HALT_CTRL1			0x4
+#define VENUS_VBIF_AXI_HALT_CTRL1			0x20C
 #define VENUS_VBIF_AXI_HALT_CTRL1_HALT_ACK		BIT(0)
 #define VENUS_VBIF_AXI_HALT_ACK_TIMEOUT_US		500000
+
 
 /* PIL proxy vote timeout */
 #define VENUS_PROXY_TIMEOUT				10000
@@ -74,9 +89,14 @@ struct venus_data {
 	struct iommu_domain *iommu_fw_domain;
 	int venus_domain_num;
 	bool is_booted;
+	bool hw_ver_checked;
+	void *ramdump_dev;
 	u32 fw_sz;
 	u32 fw_min_paddr;
 	u32 fw_max_paddr;
+	u32 bus_perf_client;
+	u32 hw_ver_major;
+	u32 hw_ver_minor;
 };
 
 #define subsys_to_drv(d) container_of(d, struct venus_data, subsys_desc)
@@ -147,6 +167,41 @@ static void venus_clock_disable_unprepare(struct device *dev)
 		clk_disable_unprepare(drv->clks[i]);
 }
 
+static struct msm_bus_vectors pil_venus_unvote_bw_vector[] = {
+	{
+		.src = MSM_BUS_MASTER_VIDEO_P0,
+		.dst = MSM_BUS_SLAVE_EBI_CH0,
+		.ab = 0,
+		.ib = 0,
+	},
+};
+
+static struct msm_bus_vectors pil_venus_vote_bw_vector[] = {
+	{
+		.src = MSM_BUS_MASTER_VIDEO_P0,
+		.dst = MSM_BUS_SLAVE_EBI_CH0,
+		.ab = 0,
+		.ib = 16 * 19 * 1000000UL, /* At least 19.2MHz on bus. */
+	},
+};
+
+static struct msm_bus_paths pil_venus_bw_tbl[] = {
+	{
+		.num_paths = ARRAY_SIZE(pil_venus_unvote_bw_vector),
+		.vectors = pil_venus_unvote_bw_vector,
+	},
+	{
+		.num_paths = ARRAY_SIZE(pil_venus_vote_bw_vector),
+		.vectors = pil_venus_vote_bw_vector,
+	},
+};
+
+static struct msm_bus_scale_pdata pil_venus_client_pdata = {
+	.usecase = pil_venus_bw_tbl,
+	.num_usecases = ARRAY_SIZE(pil_venus_bw_tbl),
+	.name = "pil-venus",
+};
+
 static int pil_venus_make_proxy_vote(struct pil_desc *pil)
 {
 	struct venus_data *drv = dev_get_drvdata(pil->dev);
@@ -161,19 +216,36 @@ static int pil_venus_make_proxy_vote(struct pil_desc *pil)
 	rc = regulator_enable(drv->gdsc);
 	if (rc) {
 		dev_err(pil->dev, "GDSC enable failed\n");
-		return rc;
+		goto err_regulator;
 	}
 
 	rc = venus_clock_prepare_enable(pil->dev);
-	if (rc)
-		regulator_disable(drv->gdsc);
+	if (rc) {
+		dev_err(pil->dev, "clock prepare and enable failed\n");
+		goto err_clock;
+	}
 
+	rc = msm_bus_scale_client_update_request(drv->bus_perf_client, 1);
+	if (rc) {
+		dev_err(pil->dev, "bandwith request failed\n");
+		goto err_bw;
+	}
+
+	return 0;
+
+err_bw:
+	venus_clock_disable_unprepare(pil->dev);
+err_clock:
+	regulator_disable(drv->gdsc);
+err_regulator:
 	return rc;
 }
 
 static void pil_venus_remove_proxy_vote(struct pil_desc *pil)
 {
 	struct venus_data *drv = dev_get_drvdata(pil->dev);
+
+	msm_bus_scale_client_update_request(drv->bus_perf_client, 0);
 
 	venus_clock_disable_unprepare(pil->dev);
 
@@ -214,6 +286,7 @@ static int pil_venus_reset(struct pil_desc *pil)
 	void __iomem *wrapper_base = drv->venus_wrapper_base;
 	phys_addr_t pa = pil_get_entry_addr(pil);
 	unsigned long iova;
+	u32 ver, cpa_start_addr, cpa_end_addr, fw_start_addr, fw_end_addr;
 
 	/*
 	 * GDSC needs to remain on till Venus is shutdown. So, enable
@@ -226,17 +299,34 @@ static int pil_venus_reset(struct pil_desc *pil)
 		return rc;
 	}
 
+	/* Get Venus version number */
+	if (!drv->hw_ver_checked) {
+		ver = readl_relaxed(wrapper_base + VENUS_WRAPPER_HW_VERSION);
+		drv->hw_ver_minor = (ver & 0x0FFF0000) >> 16;
+		drv->hw_ver_major = (ver & 0xF0000000) >> 28;
+		drv->hw_ver_checked = 1;
+	}
+
+	/* Get the cpa and fw start/end addr based on Venus version */
+	if (drv->hw_ver_major == 0x1 && drv->hw_ver_minor <= 1) {
+		cpa_start_addr = VENUS_WRAPPER_VBIF_SS_SEC_CPA_START_ADDR_v1;
+		cpa_end_addr = VENUS_WRAPPER_VBIF_SS_SEC_CPA_END_ADDR_v1;
+		fw_start_addr = VENUS_WRAPPER_VBIF_SS_SEC_FW_START_ADDR_v1;
+		fw_end_addr = VENUS_WRAPPER_VBIF_SS_SEC_FW_END_ADDR_v1;
+	} else {
+		cpa_start_addr = VENUS_WRAPPER_VBIF_SS_SEC_CPA_START_ADDR_v2;
+		cpa_end_addr = VENUS_WRAPPER_VBIF_SS_SEC_CPA_END_ADDR_v2;
+		fw_start_addr = VENUS_WRAPPER_VBIF_SS_SEC_FW_START_ADDR_v2;
+		fw_end_addr = VENUS_WRAPPER_VBIF_SS_SEC_FW_END_ADDR_v2;
+	}
+
 	/* Program CPA start and end address */
-	writel_relaxed(0, wrapper_base +
-			VENUS_WRAPPER_VBIF_SS_SEC_CPA_START_ADDR);
-	writel_relaxed(drv->fw_sz, wrapper_base +
-			VENUS_WRAPPER_VBIF_SS_SEC_CPA_END_ADDR);
+	writel_relaxed(0, wrapper_base + cpa_start_addr);
+	writel_relaxed(drv->fw_sz, wrapper_base + cpa_end_addr);
 
 	/* Program FW start and end address */
-	writel_relaxed(0, wrapper_base +
-			VENUS_WRAPPER_VBIF_SS_SEC_FW_START_ADDR);
-	writel_relaxed(drv->fw_sz, wrapper_base +
-			VENUS_WRAPPER_VBIF_SS_SEC_FW_END_ADDR);
+	writel_relaxed(0, wrapper_base + fw_start_addr);
+	writel_relaxed(drv->fw_sz, wrapper_base + fw_end_addr);
 
 	/* Enable all Venus internal clocks */
 	writel_relaxed(0, wrapper_base + VENUS_WRAPPER_CLOCK_CONFIG);
@@ -308,6 +398,17 @@ static int pil_venus_shutdown(struct pil_desc *pil)
 
 	iommu_detach_device(drv->iommu_fw_domain, drv->iommu_fw_ctx);
 
+	/*
+	 * Force the VBIF clk to be on to avoid AXI bridge halt ack failure
+	 * for certain Venus version.
+	 */
+	if (drv->hw_ver_major == 0x1 &&
+		(drv->hw_ver_minor == 0x2 || drv->hw_ver_minor == 0x3)) {
+		reg = readl_relaxed(vbif_base + VENUS_VBIF_CLKON);
+		reg |= VENUS_VBIF_CLKON_FORCE_ON;
+		writel_relaxed(reg, vbif_base + VENUS_VBIF_CLKON);
+	}
+
 	/* Halt AXI and AXI OCMEM VBIF Access */
 	reg = readl_relaxed(vbif_base + VENUS_VBIF_AXI_HALT_CTRL0);
 	reg |= VENUS_VBIF_AXI_HALT_CTRL0_HALT_REQ;
@@ -342,6 +443,12 @@ static int pil_venus_init_image_trusted(struct pil_desc *pil,
 		const u8 *metadata, size_t size)
 {
 	return pas_init_image(PAS_VIDC, metadata, size);
+}
+
+static int pil_venus_mem_setup_trusted(struct pil_desc *pil, phys_addr_t addr,
+			       size_t size)
+{
+	return pas_mem_setup(PAS_VIDC, addr, size);
 }
 
 static int pil_venus_reset_trusted(struct pil_desc *pil)
@@ -385,6 +492,7 @@ static int pil_venus_shutdown_trusted(struct pil_desc *pil)
 
 static struct pil_reset_ops pil_venus_ops_trusted = {
 	.init_image = pil_venus_init_image_trusted,
+	.mem_setup =  pil_venus_mem_setup_trusted,
 	.auth_and_reset = pil_venus_reset_trusted,
 	.shutdown = pil_venus_shutdown_trusted,
 	.proxy_vote = pil_venus_make_proxy_vote,
@@ -402,6 +510,29 @@ static void venus_stop(const struct subsys_desc *desc)
 {
 	struct venus_data *drv = subsys_to_drv(desc);
 	pil_shutdown(&drv->desc);
+}
+
+static int venus_shutdown(const struct subsys_desc *desc)
+{
+	struct venus_data *drv = subsys_to_drv(desc);
+	pil_shutdown(&drv->desc);
+	return 0;
+}
+
+static int venus_powerup(const struct subsys_desc *desc)
+{
+	struct venus_data *drv = subsys_to_drv(desc);
+	return pil_boot(&drv->desc);
+}
+
+static int venus_ramdump(int enable, const struct subsys_desc *desc)
+{
+	struct venus_data *drv = subsys_to_drv(desc);
+
+	if (!enable)
+		return 0;
+
+	return pil_do_ramdump(&drv->desc, drv->ramdump_dev);
 }
 
 static int __devinit pil_venus_probe(struct platform_device *pdev)
@@ -438,6 +569,13 @@ static int __devinit pil_venus_probe(struct platform_device *pdev)
 	if (rc)
 		return rc;
 
+	drv->bus_perf_client =
+			msm_bus_scale_register_client(&pil_venus_client_pdata);
+	if (!drv->bus_perf_client) {
+		dev_err(&pdev->dev, "Failed to register bus client\n");
+		return -EINVAL;
+	}
+
 	drv->iommu_fw_ctx  = msm_iommu_get_ctx("venus_fw");
 	if (!drv->iommu_fw_ctx) {
 		dev_err(&pdev->dev, "No iommu fw context found\n");
@@ -449,6 +587,7 @@ static int __devinit pil_venus_probe(struct platform_device *pdev)
 				      &desc->name);
 	if (rc)
 		return rc;
+
 
 	desc->dev = &pdev->dev;
 	desc->owner = THIS_MODULE;
@@ -462,23 +601,34 @@ static int __devinit pil_venus_probe(struct platform_device *pdev)
 		dev_info(&pdev->dev, "using non-secure boot\n");
 	}
 
+	drv->ramdump_dev = create_ramdump_device("venus", &pdev->dev);
+	if (!drv->ramdump_dev)
+		return -ENOMEM;
+
 	rc = pil_desc_init(desc);
 	if (rc)
-		return rc;
+		goto err_ramdump;
 
 	drv->subsys_desc.name = desc->name;
 	drv->subsys_desc.owner = THIS_MODULE;
 	drv->subsys_desc.dev = &pdev->dev;
 	drv->subsys_desc.start = venus_start;
 	drv->subsys_desc.stop = venus_stop;
+	drv->subsys_desc.shutdown = venus_shutdown;
+	drv->subsys_desc.powerup = venus_powerup;
+	drv->subsys_desc.ramdump = venus_ramdump;
 
 	drv->subsys = subsys_register(&drv->subsys_desc);
 	if (IS_ERR(drv->subsys)) {
-		pil_desc_release(desc);
-		return PTR_ERR(drv->subsys);
+		rc = PTR_ERR(drv->subsys);
+		goto err_subsys;
 	}
-
-	return 0;
+	return rc;
+err_subsys:
+	pil_desc_release(desc);
+err_ramdump:
+	destroy_ramdump_device(drv->ramdump_dev);
+	return rc;
 }
 
 static int __devexit pil_venus_remove(struct platform_device *pdev)

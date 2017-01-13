@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -29,11 +29,12 @@
 #include <mach/msm_bus_board.h>
 #include <mach/msm_bus.h>
 #include <mach/subsystem_restart.h>
+#include <mach/ramdump.h>
+#include <mach/msm_smem.h>
 
 #include "peripheral-loader.h"
 #include "scm-pas.h"
 #include "smd_private.h"
-#include "ramdump.h"
 
 #define GSS_CSR_AHB_CLK_SEL	0x0
 #define GSS_CSR_RESET		0x4
@@ -203,7 +204,7 @@ static int pil_gss_reset(struct pil_desc *pil)
 {
 	struct gss_data *drv = dev_get_drvdata(pil->dev);
 	void __iomem *base = drv->base;
-	unsigned long start_addr = pil_get_entry_addr(pil);
+	phys_addr_t start_addr = pil_get_entry_addr(pil);
 	void __iomem *cbase = drv->cbase;
 	int ret;
 
@@ -404,11 +405,6 @@ void gss_crash_shutdown(const struct subsys_desc *desc)
 	smsm_reset_modem(SMSM_RESET);
 }
 
-/* FIXME: Get address, size from PIL */
-static struct ramdump_segment gss_segments[] = {
-	{0x89000000, 0x00D00000}
-};
-
 static struct ramdump_segment smem_segments[] = {
 	{0x80000000, 0x00200000},
 };
@@ -418,20 +414,20 @@ static int gss_ramdump(int enable, const struct subsys_desc *desc)
 	int ret;
 	struct gss_data *drv = container_of(desc, struct gss_data, subsys_desc);
 
-	if (enable) {
-		ret = do_ramdump(drv->ramdump_dev, gss_segments,
-				ARRAY_SIZE(gss_segments));
-		if (ret < 0) {
-			pr_err("Unable to dump gss memory\n");
-			return ret;
-		}
+	if (!enable)
+		return 0;
 
-		ret = do_ramdump(drv->smem_ramdump_dev, smem_segments,
-			ARRAY_SIZE(smem_segments));
-		if (ret < 0) {
-			pr_err("Unable to dump smem memory (rc = %d).\n", ret);
-			return ret;
-		}
+	ret = pil_do_ramdump(&drv->pil_desc, drv->ramdump_dev);
+	if (ret < 0) {
+		pr_err("Unable to dump gss memory\n");
+		return ret;
+	}
+
+	ret = do_elf_ramdump(drv->smem_ramdump_dev, smem_segments,
+		ARRAY_SIZE(smem_segments));
+	if (ret < 0) {
+		pr_err("Unable to dump smem memory (rc = %d).\n", ret);
+		return ret;
 	}
 
 	return 0;

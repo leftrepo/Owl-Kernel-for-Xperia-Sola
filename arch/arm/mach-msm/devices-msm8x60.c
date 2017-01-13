@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2012, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -45,7 +45,6 @@
 #ifdef CONFIG_MSM_DSPS
 #include <mach/msm_dsps.h>
 #endif
-#include <linux/android_pmem.h>
 #include <linux/gpio.h>
 #include <linux/delay.h>
 #include <mach/mdm.h>
@@ -100,9 +99,25 @@
 #define MSM_UART9DM_PHYS    (MSM_GSBI9_PHYS + 0x40000)
 #define INT_UART9DM_IRQ     GSBI9_UARTDM_IRQ
 
+static struct resource msm_gpio_resources[] = {
+	{
+		.start	= TLMM_MSM_SUMMARY_IRQ,
+		.end	= TLMM_MSM_SUMMARY_IRQ,
+		.flags	= IORESOURCE_IRQ,
+	},
+};
+
+static struct msm_gpio_pdata msm8660_gpio_pdata = {
+	.ngpio = 173,
+	.direct_connect_irqs = 10,
+};
+
 struct platform_device msm_gpio_device = {
-	.name = "msmgpio",
-	.id = -1,
+	.name			= "msmgpio",
+	.id			= -1,
+	.num_resources		= ARRAY_SIZE(msm_gpio_resources),
+	.resource		= msm_gpio_resources,
+	.dev.platform_data	= &msm8660_gpio_pdata,
 };
 
 static void charm_ap2mdm_kpdpwr_on(void)
@@ -396,6 +411,7 @@ static struct msm_serial_hslite_platform_data uart_gsbi9_pdata = {
 	.uart_tx_gpio	= 67,
 	.uart_rx_gpio	= 66,
 	.line		= 1,
+	.set_uart_clk_zero = true,
 };
 
 static struct resource msm_uart_gsbi9_resources[] = {
@@ -786,7 +802,6 @@ static struct kgsl_device_platform_data kgsl_3d0_pdata = {
 	.num_levels = 5,
 	.set_grp_async = NULL,
 	.idle_timeout = HZ/5,
-	.nap_allowed = true,
 	.clk_map = KGSL_CLK_CORE | KGSL_CLK_IFACE | KGSL_CLK_MEM_IFACE,
 #ifdef CONFIG_MSM_BUS_SCALING
 	.bus_scale_table = &grp3d_bus_scale_pdata,
@@ -833,7 +848,6 @@ static struct kgsl_device_platform_data kgsl_2d0_pdata = {
 	.num_levels = 2,
 	.set_grp_async = NULL,
 	.idle_timeout = HZ/10,
-	.nap_allowed = true,
 	.clk_map = KGSL_CLK_CORE | KGSL_CLK_IFACE,
 #ifdef CONFIG_MSM_BUS_SCALING
 	.bus_scale_table = &grp2d0_bus_scale_pdata,
@@ -880,7 +894,6 @@ static struct kgsl_device_platform_data kgsl_2d1_pdata = {
 	.num_levels = 2,
 	.set_grp_async = NULL,
 	.idle_timeout = HZ/10,
-	.nap_allowed = true,
 	.clk_map = KGSL_CLK_CORE | KGSL_CLK_IFACE,
 #ifdef CONFIG_MSM_BUS_SCALING
 	.bus_scale_table = &grp2d1_bus_scale_pdata,
@@ -3165,3 +3178,9 @@ struct platform_device msm8660_iommu_domain_device = {
 		.platform_data = &msm8660_iommu_domain_pdata,
 	}
 };
+
+struct platform_device msm8660_pm_8x60 = {
+	.name		= "pm-8x60",
+	.id		= -1,
+};
+

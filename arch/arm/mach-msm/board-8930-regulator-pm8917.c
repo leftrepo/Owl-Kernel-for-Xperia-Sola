@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -194,7 +194,7 @@ VREG_CONSUMERS(S4) = {
 	REGULATOR_SUPPLY("VDDIO_CDC",		"sitar1p1-slim"),
 	REGULATOR_SUPPLY("CDC_VDDA_TX",		"sitar1p1-slim"),
 	REGULATOR_SUPPLY("CDC_VDDA_RX",		"sitar1p1-slim"),
-	REGULATOR_SUPPLY("vddp",		"0-0048"),
+	REGULATOR_SUPPLY("vcc_i2c",		"0-0048"),
 	REGULATOR_SUPPLY("mhl_iovcc18",		"0-0039"),
 	REGULATOR_SUPPLY("CDC_VDD_CP",		"sitar-slim"),
 	REGULATOR_SUPPLY("CDC_VDD_CP",		"sitar1p1-slim"),
@@ -233,7 +233,6 @@ VREG_CONSUMERS(LVS4) = {
 	REGULATOR_SUPPLY("8917_lvs4",		NULL),
 	REGULATOR_SUPPLY("vcc_i2c",		"3-004a"),
 	REGULATOR_SUPPLY("vcc_i2c",		"3-0024"),
-	REGULATOR_SUPPLY("vcc_i2c",		"0-0048"),
 	REGULATOR_SUPPLY("vddio",		"12-0018"),
 	REGULATOR_SUPPLY("vlogic",		"12-0068"),
 };
@@ -552,8 +551,8 @@ msm8930_rpm_regulator_init_data[] __devinitdata = {
 	/*	ID a_on pd ss min_uV   max_uV  supply sys_uA  freq  fm  ss_fm */
 	RPM_SMPS(S1, 1, 1, 0, 1300000, 1300000, NULL, 100000, 3p20, NONE, NONE),
 	RPM_SMPS(S2, 0, 1, 0, 1300000, 1300000, NULL,      0, 1p60, NONE, NONE),
-	RPM_SMPS(S3, 0, 1, 1,  500000, 1150000, NULL, 100000, 4p80, AUTO, LPM),
-	RPM_SMPS(S4, 1, 1, 0, 1800000, 1800000, NULL, 100000, 1p60, AUTO, LPM),
+	RPM_SMPS(S3, 0, 1, 1,  500000, 1150000, NULL, 100000, 4p80, NONE, NONE),
+	RPM_SMPS(S4, 1, 1, 0, 1800000, 1800000, NULL, 100000, 1p60, NONE, NONE),
 	RPM_SMPS(S7, 0, 1, 0, 1150000, 1150000, NULL, 100000, 3p20, AUTO, AUTO),
 	RPM_SMPS(S8, 1, 1, 1, 2050000, 2050000, NULL, 100000, 1p60, NONE, NONE),
 

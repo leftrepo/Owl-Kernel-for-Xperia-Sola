@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -191,6 +191,7 @@ int ocmem_rdm_transfer(int id, struct ocmem_map_list *clist,
 	int table_end = 0;
 	int br_ctrl = 0;
 	int br_id = 0;
+	int client_id = 0;
 	int dm_ctrl = 0;
 	int i = 0;
 	int j = 0;
@@ -204,6 +205,11 @@ int ocmem_rdm_transfer(int id, struct ocmem_map_list *clist,
 				get_name(id), id);
 		return rc;
 	}
+
+	/* Clear DM Mask */
+	ocmem_write(DM_MASK_RESET, dm_base + DM_INTR_MASK);
+	/* Clear DM Interrupts */
+	ocmem_write(DM_INTR_RESET, dm_base + DM_INTR_CLR);
 
 	for (i = 0, j = slot; i < num_chunks; i++, j++) {
 
@@ -244,6 +250,8 @@ int ocmem_rdm_transfer(int id, struct ocmem_map_list *clist,
 	dm_ctrl |= (table_start << DM_TBL_START);
 	dm_ctrl |= (table_end << DM_TBL_END);
 
+	client_id = client_ctrl_id(id);
+	dm_ctrl |= (client_id << DM_CLIENT_SHIFT);
 	dm_ctrl |= (DM_BR_ID_LPASS << DM_BR_ID_SHIFT);
 	dm_ctrl |= (DM_BLOCK_256 << DM_BR_BLK_SHIFT);
 	dm_ctrl |= (direction << DM_DIR_SHIFT);
@@ -293,10 +301,6 @@ int ocmem_rdm_init(struct platform_device *pdev)
 
 	init_completion(&dm_clear_event);
 	init_completion(&dm_transfer_event);
-	/* Clear DM Mask */
-	ocmem_write(DM_MASK_RESET, dm_base + DM_INTR_MASK);
-	/* enable dm interrupts */
-	ocmem_write(DM_INTR_RESET, dm_base + DM_INTR_CLR);
 	ocmem_disable_core_clock();
 	return 0;
 }

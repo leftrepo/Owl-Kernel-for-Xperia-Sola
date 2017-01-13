@@ -261,8 +261,10 @@ static int audio_enable(struct audio *audio)
 		cfg.snd_method = RPC_SND_METHOD_MIDI;
 
 		rc = audmgr_enable(&audio->audmgr, &cfg);
-		if (rc < 0)
+		if (rc < 0) {
+			msm_adsp_dump(audio->audplay);
 			return rc;
+		}
 	}
 
 	if (msm_adsp_enable(audio->audplay)) {
@@ -306,8 +308,12 @@ static int audio_disable(struct audio *audio)
 		wake_up(&audio->read_wait);
 		msm_adsp_disable(audio->audplay);
 		audpp_disable(audio->dec_id, audio);
-		if (audio->pcm_feedback == TUNNEL_MODE_PLAYBACK)
-			audmgr_disable(&audio->audmgr);
+		if (audio->pcm_feedback == TUNNEL_MODE_PLAYBACK) {
+			rc = audmgr_disable(&audio->audmgr);
+			if (rc < 0)
+				msm_adsp_dump(audio->audplay);
+		}
+
 		audio->out_needed = 0;
 		rmt_put_resource(audio);
 		audio->rmt_resource_released = 1;
@@ -906,7 +912,8 @@ static long audio_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	MM_DBG("cmd = %d\n", cmd);
 
 	if (cmd == AUDIO_GET_STATS) {
-		struct msm_audio_stats stats;
+		struct msm_audio_stats stats = {0,};
+		memset(&stats, 0, sizeof(struct msm_audio_stats));
 		stats.byte_count = audpp_avsync_byte_count(audio->dec_id);
 		stats.sample_count = audpp_avsync_sample_count(audio->dec_id);
 		if (copy_to_user((void *)arg, &stats, sizeof(stats)))

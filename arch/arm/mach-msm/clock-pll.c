@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -15,14 +15,15 @@
 #include <linux/kernel.h>
 #include <linux/delay.h>
 #include <linux/err.h>
+#include <linux/clk.h>
 #include <linux/remote_spinlock.h>
 
 #include <mach/scm-io.h>
 #include <mach/msm_iomap.h>
+#include <mach/msm_smem.h>
 
 #include "clock.h"
 #include "clock-pll.h"
-#include "smd_private.h"
 
 #ifdef CONFIG_MSM_SECURE_IO
 #undef readl_relaxed
@@ -54,6 +55,7 @@
 static DEFINE_SPINLOCK(pll_reg_lock);
 
 #define ENABLE_WAIT_MAX_LOOPS 200
+#define PLL_LOCKED_BIT BIT(16)
 
 static int pll_vote_clk_enable(struct clk *c)
 {
@@ -148,6 +150,51 @@ static void __pll_config_reg(void __iomem *pll_config, struct pll_freq_tbl *f,
 	writel_relaxed(regval, pll_config);
 }
 
+static int sr2_pll_clk_enable(struct clk *c)
+{
+	unsigned long flags;
+	struct pll_clk *pll = to_pll_clk(c);
+	int ret = 0, count;
+	u32 mode = readl_relaxed(PLL_MODE_REG(pll));
+
+	spin_lock_irqsave(&pll_reg_lock, flags);
+
+	/* Disable PLL bypass mode. */
+	mode |= PLL_BYPASSNL;
+	writel_relaxed(mode, PLL_MODE_REG(pll));
+
+	/*
+	 * H/W requires a 5us delay between disabling the bypass and
+	 * de-asserting the reset. Delay 10us just to be safe.
+	 */
+	mb();
+	udelay(10);
+
+	/* De-assert active-low PLL reset. */
+	mode |= PLL_RESET_N;
+	writel_relaxed(mode, PLL_MODE_REG(pll));
+
+	/* Wait for pll to lock. */
+	for (count = ENABLE_WAIT_MAX_LOOPS; count > 0; count--) {
+		if (readl_relaxed(PLL_STATUS_REG(pll)) & PLL_LOCKED_BIT)
+			break;
+		udelay(1);
+	}
+
+	if (!(readl_relaxed(PLL_STATUS_REG(pll)) & PLL_LOCKED_BIT))
+		pr_err("PLL %s didn't lock after enabling it!\n", c->dbg_name);
+
+	/* Enable PLL output. */
+	mode |= PLL_OUTCTRL;
+	writel_relaxed(mode, PLL_MODE_REG(pll));
+
+	/* Ensure that the write above goes through before returning. */
+	mb();
+
+	spin_unlock_irqrestore(&pll_reg_lock, flags);
+	return ret;
+}
+
 static void __pll_clk_enable_reg(void __iomem *mode_reg)
 {
 	u32 mode = readl_relaxed(mode_reg);
@@ -216,11 +263,31 @@ static enum handoff local_pll_clk_handoff(struct clk *c)
 	struct pll_clk *pll = to_pll_clk(c);
 	u32 mode = readl_relaxed(PLL_MODE_REG(pll));
 	u32 mask = PLL_BYPASSNL | PLL_RESET_N | PLL_OUTCTRL;
+	unsigned long parent_rate;
+	u32 lval, mval, nval, userval;
 
-	if ((mode & mask) == mask)
+	if ((mode & mask) != mask)
+		return HANDOFF_DISABLED_CLK;
+
+	/* Assume bootloaders configure PLL to c->rate */
+	if (c->rate)
 		return HANDOFF_ENABLED_CLK;
 
-	return HANDOFF_DISABLED_CLK;
+	parent_rate = clk_get_rate(c->parent);
+	lval = readl_relaxed(PLL_L_REG(pll));
+	mval = readl_relaxed(PLL_M_REG(pll));
+	nval = readl_relaxed(PLL_N_REG(pll));
+	userval = readl_relaxed(PLL_CONFIG_REG(pll));
+
+	c->rate = parent_rate * lval;
+
+	if (pll->masks.mn_en_mask && userval) {
+		if (!nval)
+			nval = 1;
+		c->rate += (parent_rate * mval) / nval;
+	}
+
+	return HANDOFF_ENABLED_CLK;
 }
 
 static int local_pll_clk_set_rate(struct clk *c, unsigned long rate)
@@ -290,8 +357,6 @@ int sr_pll_clk_enable(struct clk *c)
 	return 0;
 }
 
-#define PLL_LOCKED_BIT BIT(16)
-
 int sr_hpm_lp_pll_clk_enable(struct clk *c)
 {
 	unsigned long flags;
@@ -332,6 +397,13 @@ out:
 
 struct clk_ops clk_ops_local_pll = {
 	.enable = local_pll_clk_enable,
+	.disable = local_pll_clk_disable,
+	.set_rate = local_pll_clk_set_rate,
+	.handoff = local_pll_clk_handoff,
+};
+
+struct clk_ops clk_ops_sr2_pll = {
+	.enable = sr2_pll_clk_enable,
 	.disable = local_pll_clk_disable,
 	.set_rate = local_pll_clk_set_rate,
 	.handoff = local_pll_clk_handoff,
@@ -478,6 +550,18 @@ static enum handoff pll_clk_handoff(struct clk *c)
 		BUG();
 	}
 
+	if (!pll_clk_is_enabled(c))
+		return HANDOFF_DISABLED_CLK;
+
+	/*
+	 * Do not call pll_clk_enable() since that function can assume
+	 * the PLL is not in use when it's called.
+	 */
+	remote_spin_lock(&pll_lock);
+	pll_control->pll[PLL_BASE + pll->id].votes |= BIT(1);
+	pll_control->pll[PLL_BASE + pll->id].on = 1;
+	remote_spin_unlock(&pll_lock);
+
 	return HANDOFF_ENABLED_CLK;
 }
 
@@ -521,10 +605,22 @@ static void pll_acpu_vote_clk_disable(struct clk *c)
 	spin_unlock_irqrestore(&soft_vote_lock, flags);
 }
 
+static enum handoff pll_acpu_vote_clk_handoff(struct clk *c)
+{
+	if (pll_vote_clk_handoff(c) == HANDOFF_DISABLED_CLK)
+		return HANDOFF_DISABLED_CLK;
+
+	if (pll_acpu_vote_clk_enable(c))
+		return HANDOFF_DISABLED_CLK;
+
+	return HANDOFF_ENABLED_CLK;
+}
+
 struct clk_ops clk_ops_pll_acpu_vote = {
 	.enable = pll_acpu_vote_clk_enable,
 	.disable = pll_acpu_vote_clk_disable,
 	.is_enabled = pll_vote_clk_is_enabled,
+	.handoff = pll_acpu_vote_clk_handoff,
 };
 
 static void __init __set_fsm_mode(void __iomem *mode_reg,

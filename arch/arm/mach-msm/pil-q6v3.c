@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2012, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -23,8 +23,8 @@
 
 #include <mach/subsystem_restart.h>
 #include <mach/scm.h>
+#include <mach/ramdump.h>
 
-#include "ramdump.h"
 #include "peripheral-loader.h"
 #include "scm-pas.h"
 
@@ -116,7 +116,7 @@ static int pil_q6v3_reset(struct pil_desc *pil)
 {
 	u32 reg;
 	struct q6v3_data *drv = dev_get_drvdata(pil->dev);
-	unsigned long start_addr = pil_get_entry_addr(pil);
+	phys_addr_t start_addr = pil_get_entry_addr(pil);
 
 	/* Put Q6 into reset */
 	reg = readl_relaxed(drv->cbase + LCC_Q6_FUNC);
@@ -279,22 +279,15 @@ static int lpass_q6_powerup(const struct subsys_desc *subsys)
 	return ret;
 }
 
-/* FIXME: Get address, size from PIL */
-static struct ramdump_segment q6_segments[] = {
-	{ 0x46700000, 0x47f00000 - 0x46700000 },
-	{ 0x28400000, 0x12800 }
-};
-
 static int lpass_q6_ramdump(int enable, const struct subsys_desc *subsys)
 {
 	struct q6v3_data *drv;
 
 	drv = container_of(subsys, struct q6v3_data, subsys_desc);
-	if (enable)
-		return do_ramdump(drv->ramdump_dev, q6_segments,
-				ARRAY_SIZE(q6_segments));
-	else
+	if (!enable)
 		return 0;
+
+	return pil_do_ramdump(&drv->pil_desc, drv->ramdump_dev);
 }
 
 static void lpass_q6_crash_shutdown(const struct subsys_desc *subsys)

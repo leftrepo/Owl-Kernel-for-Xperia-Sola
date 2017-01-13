@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
  *
  *
  * This software is licensed under the terms of the GNU General Public
@@ -37,8 +37,8 @@
 #define MSM8226_TLMM_PHYS	0xFD510000
 #define MSM8226_TLMM_SIZE	SZ_16K
 
-#define MSM8226_IMEM_PHYS	0xFE805000
-#define MSM8226_IMEM_SIZE	SZ_4K
+#define MSM8226_MPM2_PSHOLD_PHYS	0xFC4AB000
+#define MSM8226_MPM2_PSHOLD_SIZE	SZ_4K
 
 #ifdef CONFIG_DEBUG_MSM8226_UART
 #define MSM_DEBUG_UART_BASE	IOMEM(0xFA71E000)

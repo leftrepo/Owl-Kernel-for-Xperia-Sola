@@ -2,7 +2,7 @@
  * Idle processing for ARMv7-based Qualcomm SoCs.
  *
  * Copyright (C) 2007 Google, Inc.
- * Copyright (c) 2007-2009, 2011-2012 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2007-2009, 2011-2013 The Linux Foundation. All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -96,22 +96,8 @@ ENTRY(msm_pm_collapse)
 	mrc     p15, 0, r9, c13, c0, 3 /* TPIDRURO */
 	mrc     p15, 0, ip, c13, c0, 1 /* context ID */
 	stmia   r0!, {r1-r9, ip}
-#ifdef CONFIG_MSM_CPU_AVS
-	mrc     p15, 7, r1, c15, c1, 7 /* AVSCSR is the Adaptive Voltage Scaling
-	                                * Control and Status Register */
-	mrc     p15, 7, r2, c15, c0, 6 /* AVSDSCR is the Adaptive Voltage
-	                                * Scaling Delay Synthesizer Control
-					* Register */
-#ifndef CONFIG_ARCH_MSM_KRAIT
-	mrc     p15, 7, r3, c15, c1, 0 /* TSCSR is the Temperature Status and
-	                                * Control Register
-					*/
-#endif
 
-	stmia   r0!, {r1-r3}
-#endif
-
-#ifdef CONFIG_MSM_JTAG
+#if defined(CONFIG_MSM_JTAG) || defined(CONFIG_MSM_JTAG_MM)
 	bl      msm_jtag_save_state
 #endif
 
@@ -199,7 +185,7 @@ skip_pc_debug2:
 	blxne	r1
 	dmb
 
-#ifdef CONFIG_MSM_JTAG
+#if defined(CONFIG_MSM_JTAG) || defined(CONFIG_MSM_JTAG_MM)
 	bl	msm_jtag_restore_state
 #endif
 	ldr     r0, =msm_saved_state	/* address of msm_saved_state ptr */
@@ -240,14 +226,6 @@ ENTRY(msm_pm_collapse_exit)
 	add	r1, r1, r2
 #endif
 
-#ifdef CONFIG_MSM_CPU_AVS
-	ldmdb   r1!, {r2-r4}
-#ifndef CONFIG_ARCH_MSM_KRAIT
-	mcr     p15, 7, r4, c15, c1, 0 /* TSCSR */
-#endif
-	mcr     p15, 7, r3, c15, c0, 6 /* AVSDSCR */
-	mcr     p15, 7, r2, c15, c1, 7 /* AVSCSR */
-#endif
 	ldmdb   r1!, {r2-r11}
 	mcr     p15, 0, r4, c3, c0, 0 /* dacr */
 	mcr     p15, 0, r3, c2, c0, 0 /* TTBR0 */
@@ -308,7 +286,7 @@ msm_pm_pa_to_va:
 	stmfd   sp!, {lr}
 	blxne	r1
 	dmb
-#ifdef CONFIG_MSM_JTAG
+#if defined(CONFIG_MSM_JTAG) || defined(CONFIG_MSM_JTAG_MM)
 	bl      msm_jtag_restore_state
 #endif
 	ldmfd   sp!, {lr}

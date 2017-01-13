@@ -33,7 +33,6 @@
  */
 
 #define COPY_COUNT (PAGE_SZ / (L1_CACHE_BYTES))
-		.thumb
 		.text
 	ARM(	.p2align 5	)
 	THUMB(	.p2align 2	)
