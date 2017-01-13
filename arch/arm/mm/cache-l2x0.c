@@ -30,8 +30,8 @@
 
 static void __iomem *l2x0_base;
 static DEFINE_RAW_SPINLOCK(l2x0_lock);
-static uint32_t l2x0_way_mask;	/* Bitmask of active ways */
-static uint32_t l2x0_size;
+static u32 l2x0_way_mask;	/* Bitmask of active ways */
+static u32 l2x0_size;
 static u32 l2x0_cache_id;
 static unsigned int l2x0_sets;
 static unsigned int l2x0_ways;
@@ -149,11 +149,11 @@ static void l2x0_for_each_set_way(void __iomem *reg)
 	unsigned long flags;
 
 	for (way = 0; way < l2x0_ways; way++) {
-		spin_lock_irqsave(&l2x0_lock, flags);
+		raw_spin_lock_irqsave(&l2x0_lock, flags);
 		for (set = 0; set < l2x0_sets; set++)
 			writel_relaxed((way << 28) | (set << 5), reg);
 		cache_sync();
-		spin_unlock_irqrestore(&l2x0_lock, flags);
+		raw_spin_unlock_irqrestore(&l2x0_lock, flags);
 	}
 }
 #endif
@@ -353,7 +353,6 @@ static void l2x0_unlock(u32 cache_id)
 void __init l2x0_init(void __iomem *base, u32 aux_val, u32 aux_mask)
 {
 	u32 aux;
-	u32 l2x0_cache_id;
 	u32 way_size = 0;
 	const char *type;
 
@@ -373,13 +372,6 @@ void __init l2x0_init(void __iomem *base, u32 aux_val, u32 aux_mask)
 		else
 			l2x0_ways = 8;
 		type = "L310";
-
-		/*
-		 * Set bit 22 in the auxiliary control register. If this bit
-		 * is cleared, PL310 treats Normal Shared Non-cacheable
-		 * accesses as Cacheable no-allocate.
-		 */
-		aux_val |= 1 << 22;
 		break;
 	case L2X0_CACHE_ID_PART_L210:
 		l2x0_ways = (aux >> 13) & 0xf;
