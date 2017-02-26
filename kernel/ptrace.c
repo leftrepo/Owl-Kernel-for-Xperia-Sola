@@ -44,36 +44,6 @@ void __ptrace_link(struct task_struct *child, struct task_struct *new_parent)
 	child->parent = new_parent;
 }
 
-/* Ensure that nothing can wake it up, even SIGKILL */
-static bool ptrace_freeze_traced(struct task_struct *task)
-{
-	bool ret = false;
-
-	spin_lock_irq(&task->sighand->siglock);
-	if (task_is_traced(task) && !__fatal_signal_pending(task)) {
-		task->state = __TASK_TRACED;
-		ret = true;
-	}
-	spin_unlock_irq(&task->sighand->siglock);
-
-	return ret;
-}
-
-static void ptrace_unfreeze_traced(struct task_struct *task)
-{
-	if (task->state != __TASK_TRACED)
-		return;
-
-	WARN_ON(!task->ptrace || task->parent != current);
-
-	spin_lock_irq(&task->sighand->siglock);
-	if (__fatal_signal_pending(task))
-		wake_up_state(task, __TASK_TRACED);
-	else
-		task->state = TASK_TRACED;
-	spin_unlock_irq(&task->sighand->siglock);
-}
-
 /**
  * __ptrace_unlink - unlink ptracee and restore its execution state
  * @child: ptracee to be unlinked

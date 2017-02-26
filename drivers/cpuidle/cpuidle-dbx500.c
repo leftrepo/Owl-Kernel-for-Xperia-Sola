@@ -515,7 +515,7 @@ static int enter_sleep(struct cpuidle_device *dev,
 		sleep_time = get_remaining_sleep_time(&est_wake_time,
 						      &wake_cpu);
 
-		if (sleep_time == UINT_MAX) {
+		if ((sleep_time == UINT_MAX) || (sleep_time == 0)) {
 			atomic_dec(&master_counter);
 			goto exit;
 		}
