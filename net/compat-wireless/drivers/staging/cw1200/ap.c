@@ -533,13 +533,13 @@ void cw1200_bss_info_changed(struct ieee80211_hw *dev,
 				    priv->join_dtim_period, 0));
 
 			if (sta && cw1200_is_ht(&priv->ht_info)) {
-				if (priv->join_status == CW1200_JOIN_STATUS_STA &&
-				    !priv->block_ack_enabled) {
+				if(priv->join_status == CW1200_JOIN_STATUS_STA &&
+								!priv->block_ack_enabled) {
 					ap_printk(KERN_DEBUG
-						  "[STA] Enabling Block ACK\n");
+						"[STA] Enabling Block ACK\n");
 					WARN_ON(wsm_set_block_ack_policy(priv,
-						priv->ba_tid_mask,
-						priv->ba_tid_mask));
+					priv->ba_tid_mask,
+					priv->ba_tid_mask));
 					priv->block_ack_enabled = true;
 				}
 			}

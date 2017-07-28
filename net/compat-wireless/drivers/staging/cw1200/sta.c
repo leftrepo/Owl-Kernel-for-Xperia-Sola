@@ -160,7 +160,6 @@ void cw1200_stop(struct ieee80211_hw *dev)
 	priv->bss_loss_status = CW1200_BSS_LOSS_NONE;
 	priv->bss_loss_checking = 0;
 	spin_unlock(&priv->bss_loss_lock);
-
 	priv->join_status = CW1200_JOIN_STATUS_PASSIVE;
 	priv->join_pending = false;
 
@@ -595,14 +594,16 @@ void cw1200_update_filtering_work(struct work_struct *work)
 
 void cw1200_set_beacon_wakeup_period_work(struct work_struct *work)
 {
+	unsigned dtim_interval;
 	struct cw1200_common *priv =
 		container_of(work, struct cw1200_common,
 		set_beacon_wakeup_period_work);
 
+	dtim_interval = priv->beacon_int * priv->join_dtim_period >
+			MAX_BEACON_SKIP_TIME_MS ? 1 : priv->join_dtim_period;
+
 	WARN_ON(wsm_set_beacon_wakeup_period(priv,
-		priv->beacon_int * priv->join_dtim_period >
-		MAX_BEACON_SKIP_TIME_MS ? 1 :
-		priv->join_dtim_period, 0));
+		dtim_interval, 0));
 }
 
 u64 cw1200_prepare_multicast(struct ieee80211_hw *hw,
@@ -717,7 +718,7 @@ int cw1200_conf_tx(struct ieee80211_hw *dev, u16 queue,
 
 		if (priv->mode == NL80211_IFTYPE_STATION) {
 			ret = cw1200_set_uapsd_param(priv, &priv->edca);
-			if (!ret && 
+			if (!ret &&
 				(priv->join_status == CW1200_JOIN_STATUS_STA) &&
 				(old_uapsdFlags != priv->uapsd_info.uapsdFlags))
 				cw1200_set_pm(priv, &priv->powersave_mode);
@@ -944,9 +945,6 @@ int cw1200_set_rts_threshold(struct ieee80211_hw *hw, u32 value)
 	__le32 val32;
 	struct cw1200_common *priv = hw->priv;
 
-	if (priv->mode == NL80211_IFTYPE_UNSPECIFIED)
-		return 0;
-
 	if (value != (u32) -1)
 		val32 = __cpu_to_le32(value);
 	else
@@ -983,7 +981,7 @@ int __cw1200_flush(struct cw1200_common *priv, bool drop)
 		/* TODO: correct flush handling is required when dev_stop.
 		 * Temporary workaround: 2s
 		 */
-		if (drop) {
+		if (drop || priv->bh_error) {
 			for (i = 0; i < 4; ++i)
 				cw1200_queue_clear(&priv->tx_queue[i]);
 		} else {
@@ -1456,20 +1454,22 @@ void cw1200_join_work(struct work_struct *work)
 	const struct ieee80211_tim_ie *tim = NULL;
 	struct wsm_protected_mgmt_policy mgmt_policy;
 
-	if (WARN_ON(delayed_work_pending(&priv->join_timeout))) {
-		printk(KERN_ERR "[STA] Skipping join request - "
-				"previous request yet to be completed\n");
+	BUG_ON(queueId >= 4);
+	if (cw1200_queue_get_skb(queue, priv->pending_frame_id,
+			&skb, &txpriv)) {
 		wsm_unlock_tx(priv);
 		return;
 	}
 
-	BUG_ON(queueId >= 4);
-	if (cw1200_queue_get_skb(queue,	priv->pending_frame_id,
-			&skb, &txpriv)) {
+	if (WARN_ON(delayed_work_pending(&priv->join_timeout))) {
+		printk(KERN_ERR "[STA] Skipping join request - "
+				"previous request yet to be completed\n");
+		cw1200_queue_remove(queue, priv->pending_frame_id);
 		wsm_unlock_tx(priv);
 		priv->join_pending = false;
 		return;
 	}
+
 	wsm = (struct wsm_tx *)&skb->data[0];
 	frame = (struct ieee80211_hdr *)&skb->data[txpriv->offset];
 	bssid = &frame->addr1[0]; /* AP SSID in a 802.11 frame */

@@ -2,7 +2,7 @@
  * Common private data for ST-Ericsson CW1200 drivers
  *
  * Copyright (c) 2010, ST-Ericsson
- * Copyright (C) 2012 Sony Mobile Communications AB. All rights reserved.
+ * Copyright (C) 2012 Sony Mobile Communications AB.
  * Author: Dmitry Tarnyagin <dmitry.tarnyagin@stericsson.com>
  *
  * Based on the mac80211 Prism54 code, which is
@@ -174,8 +174,8 @@ struct cw1200_common {
 	u8				conf_listen_interval;
 	u32				listen_interval;
 	u32				erp_info;
-	u32				rts_threshold;
 	bool				setup_mac_done;
+	u32				rts_threshold;
 
 	/* BH */
 	atomic_t			bh_rx;
@@ -292,7 +292,7 @@ struct cw1200_common {
 	u8			action_linkid;
 #endif
 	atomic_t		hw_state;
-	bool			block_ack_enabled;
+	bool 			block_ack_enabled;
 };
 
 struct cw1200_sta_priv {

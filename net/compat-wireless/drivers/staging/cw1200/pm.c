@@ -97,6 +97,7 @@ static int cw1200_pm_init_common(struct cw1200_pm_state *pm,
 				  struct cw1200_common *priv)
 {
 	spin_lock_init(&pm->lock);
+
 	return 0;
 }
 
